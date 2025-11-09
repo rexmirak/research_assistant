@@ -32,12 +32,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     - name: Install project (editable)
-      run: |
-        pip install -e .
-        echo "PYTHONPATH set"
       env:
         PYTHONPATH: ${{ github.workspace }}
-        pip install -e .
+      run: pip install -e .
     
     - name: Run Black
       run: black --check core/ utils/ cache/ tests/ *.py
@@ -80,11 +77,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     - name: Install project (editable)
-      run: |
-        pip install -e .
       env:
         PYTHONPATH: ${{ github.workspace }}
-        pip install -e .
+      run: pip install -e .
     
     - name: Run unit tests
       run: |
