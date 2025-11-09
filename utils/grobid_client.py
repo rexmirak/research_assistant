@@ -1,6 +1,16 @@
-"""GROBID client for PDF metadata extraction."""
+"""GROBID client for PDF metadata extraction.
+
+Enhancements:
+ - Robust retry logic for transient failures (connection, 5xx, malformed output)
+ - Graceful handling of invalid/non-XML responses (HTML error page, empty string)
+ - Reduced log noise: single warning per failure instead of noisy stack traces
+ - Returns None on hard failures so upstream fallback (PDF metadata) can engage
+"""
 
 import logging
+import time
+from dataclasses import dataclass
+from typing import Callable
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -10,10 +20,18 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _RetryConfig:
+    attempts: int = 3
+    base_delay: float = 1.0  # seconds
+    max_delay: float = 5.0
+    backoff: float = 2.0
+
+
 class GrobidClient:
     """Client for GROBID service."""
 
-    def __init__(self, base_url: str = "http://localhost:8070", timeout: int = 60):
+    def __init__(self, base_url: str = "http://localhost:8070", timeout: int = 60, retry: _RetryConfig | None = None):
         """
         Initialize GROBID client.
 
@@ -23,6 +41,7 @@ class GrobidClient:
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retry = retry or _RetryConfig()
 
     def is_alive(self) -> bool:
         """Check if GROBID service is running."""
@@ -45,25 +64,43 @@ class GrobidClient:
         """
         if not pdf_path.exists():
             logger.error(f"PDF not found: {pdf_path}")
-            return None
+            return {"grobid_status": "file_missing"}
 
-        try:
-            # Call GROBID processHeaderDocument endpoint
-            url = f"{self.base_url}/api/processHeaderDocument"
-            with open(pdf_path, "rb") as f:
-                files = {"input": f}
-                response = requests.post(url, files=files, timeout=self.timeout)
+        url = f"{self.base_url}/api/processHeaderDocument"
 
-            if response.status_code != 200:
-                logger.warning(f"GROBID failed for {pdf_path.name}: {response.status_code}")
+        def _do_request() -> Optional[str]:
+            try:
+                with open(pdf_path, "rb") as f:
+                    files = {"input": f}
+                    response = requests.post(url, files=files, timeout=self.timeout)
+                if response.status_code != 200:
+                    logger.warning(
+                        f"GROBID response status {response.status_code} for {pdf_path.name}"
+                    )
+                    return None
+                text = response.text.strip()
+                if not text:
+                    logger.warning(f"Empty GROBID response for {pdf_path.name}")
+                    return None
+                return text
+            except Exception as e:  # network / connection errors
+                logger.warning(f"GROBID request error for {pdf_path.name}: {e}")
                 return None
 
-            # Parse TEI XML response
-            return self._parse_tei(response.text)
+        tei_xml = self._with_retries(_do_request)
+        if not tei_xml:
+            # Give up – upstream will fallback; return status object
+            return {"grobid_status": "request_failed"}
 
-        except Exception as e:
-            logger.error(f"GROBID processing error for {pdf_path.name}: {e}")
-            return None
+        parsed = self._parse_tei(tei_xml)
+        if not parsed.get("title") and not parsed.get("authors"):
+            # Bad parse – mark status for fallback; keep partial fields
+            if "grobid_status" not in parsed:
+                parsed["grobid_status"] = "parse_error"
+            return parsed
+        # Successful parse
+        parsed["grobid_status"] = parsed.get("grobid_status", "ok")
+        return parsed
 
     def get_bibtex(self, pdf_path: Path) -> Optional[str]:
         """
@@ -78,20 +115,23 @@ class GrobidClient:
         if not pdf_path.exists():
             return None
 
-        try:
-            url = f"{self.base_url}/api/processHeaderDocument"
-            with open(pdf_path, "rb") as f:
-                files = {"input": f}
-                data = {"format": "bibtex"}
-                response = requests.post(url, files=files, data=data, timeout=self.timeout)
+        url = f"{self.base_url}/api/processHeaderDocument"
 
-            if response.status_code == 200:
-                return response.text
-            return None
+        def _do_bibtex() -> Optional[str]:
+            try:
+                with open(pdf_path, "rb") as f:
+                    files = {"input": f}
+                    data = {"format": "bibtex"}
+                    response = requests.post(url, files=files, data=data, timeout=self.timeout)
+                if response.status_code != 200:
+                    return None
+                text = response.text.strip()
+                return text or None
+            except Exception as e:
+                logger.debug(f"BibTeX request error for {pdf_path.name}: {e}")
+                return None
 
-        except Exception as e:
-            logger.error(f"BibTeX extraction error for {pdf_path.name}: {e}")
-            return None
+        return self._with_retries(_do_bibtex)
 
     def _parse_tei(self, tei_xml: str) -> Dict[str, Any]:
         """
@@ -112,8 +152,14 @@ class GrobidClient:
             "abstract": None,
         }
 
+        # Quick sanity check to avoid parsing obvious non-XML (e.g., HTML error page)
+        sample = tei_xml[:100].lower()
+        if not tei_xml.strip().startswith("<") or "<html" in sample:
+            logger.warning("Non-XML or HTML response received instead of TEI; skipping parse")
+            result["grobid_status"] = "non_xml"
+            return result
+
         try:
-            # Register namespace
             ns = {"tei": "http://www.tei-c.org/ns/1.0"}
             root = ET.fromstring(tei_xml)
 
@@ -158,7 +204,27 @@ class GrobidClient:
             if abstract_elem is not None and abstract_elem.text:
                 result["abstract"] = abstract_elem.text.strip()
 
+        except ET.ParseError as e:
+            logger.warning(f"TEI parsing error (malformed XML): {e}")
+            result["grobid_status"] = "parse_error"
         except Exception as e:
-            logger.error(f"TEI parsing error: {e}")
+            logger.warning(f"Unexpected TEI parsing error: {e}")
+            result["grobid_status"] = "unexpected_error"
 
         return result
+
+    # ------------------------------------------------------------------
+    # Retry helper
+    # ------------------------------------------------------------------
+    def _with_retries(self, fn: Callable[[], Optional[str]]) -> Optional[str]:
+        attempt = 0
+        delay = self.retry.base_delay
+        while attempt < self.retry.attempts:
+            result = fn()
+            if result is not None:
+                return result
+            attempt += 1
+            if attempt < self.retry.attempts:
+                time.sleep(min(delay, self.retry.max_delay))
+                delay *= self.retry.backoff
+        return None

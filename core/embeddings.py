@@ -1,6 +1,7 @@
 """Embedding generation using Ollama."""
 
 import logging
+import os
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -28,6 +29,11 @@ class EmbeddingGenerator:
         self.model = model
         self.base_url = base_url
         self.batch_size = batch_size
+
+        # Ensure Ollama client targets the configured base URL
+        if self.base_url:
+            # Ollama Python client reads OLLAMA_HOST env var
+            os.environ.setdefault("OLLAMA_HOST", self.base_url)
 
     def embed(self, text: str) -> Optional[List[float]]:
         """
@@ -130,15 +136,56 @@ class EmbeddingGenerator:
             import ollama
 
             # Try to list models
-            models = ollama.list()
+            models_resp = ollama.list()
 
-            # Check if our model is available
-            model_names = [m["name"] for m in models.get("models", [])]
-            if self.model not in model_names:
-                logger.warning(f"Model {self.model} not found. Available models: {model_names}")
+            # Normalize response into a list of model names
+            model_names = []
+            items = None
+            if hasattr(models_resp, "models"):
+                items = getattr(models_resp, "models")
+            elif isinstance(models_resp, dict):
+                # Prefer 'models' key (current), fall back to other common shapes
+                items = models_resp.get("models") or models_resp.get("data") or []
+            elif isinstance(models_resp, list):
+                items = models_resp
+
+            if isinstance(items, list):
+                for m in items:
+                    if isinstance(m, str):
+                        model_names.append(m)
+                    elif isinstance(m, dict):
+                        name = (
+                            m.get("name")
+                            or m.get("model")
+                            or m.get("id")
+                            or m.get("tag")
+                            or ""
+                        )
+                        if name:
+                            model_names.append(name)
+                    else:
+                        # Support typed objects from ollama client (e.g., Model)
+                        name = getattr(m, "name", None) or getattr(m, "model", None)
+                        if isinstance(name, str) and name:
+                            model_names.append(name)
+
+            # Fallback: some clients return {"models": [{"name": "foo"}]} at /api/tags
+            # If parsing failed, avoid crash and proceed with empty list
+
+            # Check if our target model is present by exact or prefix/substring match
+            target = self.model
+            found = any(
+                (n == target) or n.startswith(target) or (target in n) for n in model_names
+            )
+            if not found:
+                logger.warning(
+                    f"Model '{self.model}' not found. Available models: {model_names or '[]'}"
+                )
                 return False
 
-            logger.info(f"Ollama connection successful, using model: {self.model}")
+            logger.info(
+                f"Ollama connection successful at {os.environ.get('OLLAMA_HOST', 'default')} using model: {self.model}"
+            )
             return True
 
         except Exception as e:

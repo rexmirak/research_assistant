@@ -11,7 +11,7 @@
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-ollama pull llama3.1:8b
+ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0
 ```
@@ -310,7 +310,7 @@ python cli.py process --config-file my_config.yaml ...
 #### Ollama Models
 ```yaml
 ollama:
-  summarize_model: "llama3.1:8b"     # For summaries & classification
+  summarize_model: "deepseek-r1:8b"     # For summaries & classification
   embed_model: "nomic-embed-text"    # For embeddings
   temperature: 0.2                   # Lower = more focused
 ```

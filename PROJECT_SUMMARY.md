@@ -101,7 +101,7 @@ Cache Manager (SQLite, resumable)
 
 ### AI/ML
 - **Ollama**: Local LLM inference
-  - `llama3.1:8b`: Summarization & classification
+  - `deepseek-r1:8b`: Summarization & classification
   - `nomic-embed-text`: Embeddings
 - **NumPy**: Vector operations
 - **scikit-learn**: Cosine similarity
@@ -192,7 +192,7 @@ make run ROOT_DIR=/path/to/papers TOPIC="Your topic"
 ## Model Choices (≤8B)
 
 ### Recommended (Default)
-- **Summarization**: `llama3.1:8b` - Balanced quality/performance
+- **Summarization/Classification**: `deepseek-r1:8b` - Strong reasoning for academic text
 - **Embeddings**: `nomic-embed-text` - Fast, good similarity
 
 ### Alternatives
@@ -296,7 +296,7 @@ make clean
 pip install -r requirements.txt --upgrade
 
 # Update Ollama models
-ollama pull llama3.1:8b
+ollama pull deepseek-r1:8b
 
 # Restart services
 make grobid-restart

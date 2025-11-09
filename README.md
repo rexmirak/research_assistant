@@ -103,7 +103,8 @@ Runtime configuration via CLI flags or `config.yaml`:
 relevance_threshold: 6.5  # Include papers with score >= 6.5
 dedup_similarity: 0.95    # Near-duplicate threshold
 ollama:
-  summarize_model: "llama3.1:8b"
+  summarize_model: "deepseek-r1:8b"
+  classify_model: "deepseek-r1:8b"
   embed_model: "nomic-embed-text"
   temperature: 0.2
 grobid:

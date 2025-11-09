@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -59,7 +60,7 @@ def cli():
 @click.option("--dry-run", is_flag=True, help="Run without moving files")
 @click.option("--resume", is_flag=True, help="Resume from cache")
 @click.option(
-    "--relevance-threshold", type=float, default=6.5, help="Relevance score threshold for inclusion"
+    "--relevance-threshold", type=float, default=7.0, help="Minimum relevance score for inclusion (papers below this are quarantined)"
 )
 @click.option("--workers", type=int, default=4, help="Number of worker processes")
 def process(
@@ -124,6 +125,18 @@ def process(
         metadata_extractor = MetadataExtractor(
             config.grobid.url, config.crossref.enabled, config.crossref.email
         )
+        # GROBID preflight: disable if not alive to avoid mass non-XML warnings
+        try:
+            if not metadata_extractor.grobid_client.is_alive():
+                logger.warning(
+                    f"GROBID not responding at {config.grobid.url}; will skip GROBID and use local metadata heuristics."
+                )
+                metadata_extractor.use_grobid = False
+        except Exception:
+            logger.warning(
+                f"GROBID preflight check failed; will skip GROBID and use local metadata heuristics."
+            )
+            metadata_extractor.use_grobid = False
         dedup_manager = DedupManager(config.dedup.similarity_threshold, config.dedup.num_perm)
         embedding_generator = EmbeddingGenerator(
             config.ollama.embed_model, config.ollama.base_url, config.processing.batch_size
@@ -169,6 +182,11 @@ def process(
         logger.info("=" * 80)
 
         paper_data = {}
+        diversion_counters = {
+            "grobid_failure": 0,
+            "short_text": 0,
+            "missing_core_metadata": 0,
+        }
 
         for doc in tqdm(documents, desc="Processing PDFs"):
             paper_id = doc.file_hash[:12]
@@ -203,6 +221,61 @@ def process(
                 cache_manager.set_text(paper_id, text, text_hash)
                 cache_manager.set_metadata(paper_id, metadata)
 
+            # Diversion logic: decide if this PDF needs manual review
+            grobid_status = (metadata or {}).get("grobid_status")
+            grobid_failed = grobid_status in {
+                "request_failed",
+                "non_xml",
+                "parse_error",
+                "unexpected_error",
+            }
+            short_text = len((text or "").strip()) < 100
+            # Missing core ONLY if BOTH title and authors are missing
+            title_missing = not bool(metadata.get("title"))
+            authors_missing = len(metadata.get("authors", [])) == 0
+            missing_core = title_missing and authors_missing
+
+            # Divert only if text is clearly unusable OR grobid failed AND we still lack core metadata
+            should_divert = short_text or (grobid_failed and missing_core)
+
+            if should_divert:
+                # Ensure manifest has an entry before recording the move so move tracking works
+                manifest = manifest_manager.get_manifest(doc.category)
+                manifest.add_paper(
+                    paper_id=paper_id,
+                    path=str(doc.file_path),
+                    content_hash=text_hash,
+                    original_category=doc.category,
+                )
+
+                # Increment counters (each reason separately; a file can contribute to multiple)
+                if grobid_failed:
+                    diversion_counters["grobid_failure"] += 1
+                if short_text:
+                    diversion_counters["short_text"] += 1
+                if missing_core:
+                    diversion_counters["missing_core_metadata"] += 1
+
+                diversion_reasons = []
+                if grobid_failed:
+                    diversion_reasons.append(f"grobid_failure:{grobid_status}")
+                if short_text:
+                    diversion_reasons.append("short_text")
+                if missing_core:
+                    diversion_reasons.append("missing_core_metadata")
+                combined_reason = ", ".join(diversion_reasons) if diversion_reasons else "diversion"
+                file_mover.move_to_category(
+                    paper_id=paper_id,
+                    current_path=doc.file_path,
+                    from_category=doc.category,
+                    to_category="need_human_element",
+                    reason=f"Manual review required: {combined_reason}",
+                )
+                logger.info(
+                    f"Diverted {doc.file_name} to need_human_element (reasons: {combined_reason})"
+                )
+                continue
+
             # Store paper data
             paper_data[paper_id] = {
                 "doc": doc,
@@ -221,6 +294,16 @@ def process(
             )
 
         manifest_manager.save_all()
+        total_diverted_unique = sum(1 for _ in (manifest_manager.get_manifest("need_human_element").entries.values()) ) if "need_human_element" in manifest_manager.manifests else 0
+        if total_diverted_unique:
+            logger.info("Diversion summary (need_human_element):")
+            logger.info(f"  Total diverted (unique papers): {total_diverted_unique}")
+            logger.info(
+                "  Reasons (counts; a paper may appear in multiple reason tallies): "
+                + ", ".join(
+                    f"{reason}={count}" for reason, count in diversion_counters.items()
+                )
+            )
 
         # Stage 3: Deduplication
         logger.info("\n" + "=" * 80)
@@ -303,7 +386,8 @@ def process(
 
         categories = inventory_manager.get_categories()
 
-        for paper_id, data in tqdm(list(paper_data.items()), desc="Validating categories"):
+        def classify_paper_task(paper_id, data):
+            """Classify a single paper and return move decision."""
             metadata = data["metadata"]
             current_category = data["doc"].category
 
@@ -315,8 +399,21 @@ def process(
                 topic=config.topic,
             )
 
-            # Move if needed
-            if classifier.should_recategorize(current_category, recommended_cat, confidence):
+            should_move = classifier.should_recategorize(current_category, recommended_cat, confidence)
+            return paper_id, data, current_category, recommended_cat, reason, should_move
+
+        # Parallelize classification with 2 workers
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            paper_items = list(paper_data.items())
+            results = list(tqdm(
+                executor.map(lambda item: classify_paper_task(item[0], item[1]), paper_items),
+                total=len(paper_items),
+                desc="Validating categories"
+            ))
+
+        # Process results sequentially (file moves must be sequential)
+        for paper_id, data, current_category, recommended_cat, reason, should_move in results:
+            if should_move:
                 logger.info(
                     f"Recategorizing {data['doc'].file_name}: {current_category} -> {recommended_cat} ({reason})"
                 )
@@ -335,9 +432,9 @@ def process(
         logger.info("STAGE 6: Quarantine Unrelated Papers")
         logger.info("=" * 80)
 
-        quarantine_threshold = 3.0  # Papers below this are quarantined
+        # Use the same threshold as inclusion - papers not included should be quarantined
         for paper_id, data in list(paper_data.items()):
-            if data.get("relevance_score", 0) < quarantine_threshold:
+            if data.get("relevance_score", 0) < relevance_threshold:
                 logger.info(
                     f"Quarantining {data['doc'].file_name} (score: {data['relevance_score']:.1f})"
                 )
@@ -355,10 +452,11 @@ def process(
 
         category_summaries = {}
 
-        for paper_id, data in tqdm(list(paper_data.items()), desc="Generating summaries"):
+        def summarize_paper_task(paper_id, data):
+            """Summarize a single paper and return result."""
             # Only summarize included papers
             if not data.get("include", False):
-                continue
+                return None
 
             metadata = data["metadata"]
             sections = data["sections"]
@@ -371,6 +469,23 @@ def process(
                 metadata=metadata,
             )
 
+            return paper_id, data, summary
+
+        # Parallelize summarization with 2 workers
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            paper_items = list(paper_data.items())
+            results = list(tqdm(
+                executor.map(lambda item: summarize_paper_task(item[0], item[1]), paper_items),
+                total=len(paper_items),
+                desc="Generating summaries"
+            ))
+
+        # Process results
+        for result in results:
+            if result is None:
+                continue
+            
+            paper_id, data, summary = result
             data["summary"] = summary
 
             # Group by category
@@ -378,6 +493,7 @@ def process(
             if category not in category_summaries:
                 category_summaries[category] = []
 
+            metadata = data["metadata"]
             category_summaries[category].append(
                 {
                     "title": metadata.get("title", ""),

@@ -10,7 +10,7 @@ class Summarizer:
     """Generate topic-focused summaries of papers."""
 
     def __init__(
-        self, model: str = "llama3.1:8b", temperature: float = 0.3, max_summary_length: int = 800
+        self, model: str = "deepseek-r1:8b", temperature: float = 0.3, max_summary_length: int = 800
     ):
         """
         Initialize summarizer.

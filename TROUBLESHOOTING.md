@@ -75,7 +75,7 @@ brew services start ollama
 
 3. Pull required models:
 ```bash
-ollama pull llama3.1:8b
+ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 ```
 

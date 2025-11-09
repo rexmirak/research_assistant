@@ -68,9 +68,9 @@ echo "Pulling required Ollama models..."
 echo "=================================="
 
 if command -v ollama &> /dev/null; then
-    echo "Pulling llama3.1:8b..."
-    ollama pull llama3.1:8b || echo "Failed to pull llama3.1:8b"
-    
+    echo "Pulling deepseek-r1:8b..."
+    ollama pull deepseek-r1:8b || echo "Failed to pull deepseek-r1:8b"
+
     echo ""
     echo "Pulling nomic-embed-text..."
     ollama pull nomic-embed-text || echo "Failed to pull nomic-embed-text"
@@ -84,11 +84,18 @@ echo "Starting GROBID service..."
 echo "=================================="
 
 if command -v docker &> /dev/null; then
-    # Check if GROBID is already running
-    if docker ps | grep -q grobid; then
-        echo "GROBID is already running"
+    # Check if GROBID container exists
+    if docker ps -a --format '{{.Names}}' | grep -q '^grobid$'; then
+        # If exists, ensure it's running
+        if docker ps --format '{{.Names}}' | grep -q '^grobid$'; then
+            echo "GROBID is already running"
+        else
+            echo "Starting existing GROBID container..."
+            docker start grobid
+            echo "GROBID started on port 8070"
+        fi
     else
-        echo "Starting GROBID Docker container..."
+        echo "Starting new GROBID Docker container..."
         docker run -d -p 8070:8070 --name grobid lfoppiano/grobid:0.8.0
         echo "GROBID started on port 8070"
     fi

@@ -38,18 +38,32 @@ class PDFParser:
         Returns:
             Tuple of (full_text, text_hash)
         """
-        # Try PyMuPDF first
+        # Try multiple extractors progressively
         text = self._extract_with_pymupdf(pdf_path)
+
+        # If weak, try pdfplumber
+        if len(text.strip()) < 100:
+            alt = self._extract_with_pdfplumber(pdf_path)
+            if len(alt.strip()) > len(text.strip()):
+                text = alt
 
         # Check if we got meaningful text
         if len(text.strip()) < 100:
             logger.info(f"Low text content in {pdf_path.name}, attempting OCR")
             text = self._extract_with_ocr(pdf_path, cache_dir)
 
-        # Fallback to pdfminer if still poor
+        # Try pdfminer if still poor
         if len(text.strip()) < 100:
-            logger.info(f"OCR failed for {pdf_path.name}, trying pdfminer")
-            text = self._extract_with_pdfminer(pdf_path)
+            logger.info(f"Prior text extractors weak for {pdf_path.name}, trying pdfminer")
+            alt = self._extract_with_pdfminer(pdf_path)
+            if len(alt.strip()) > len(text.strip()):
+                text = alt
+
+        # Try pdftotext (poppler) CLI before OCR
+        if len(text.strip()) < 100:
+            alt = self._extract_with_pdftotext(pdf_path)
+            if len(alt.strip()) > len(text.strip()):
+                text = alt
 
         # Normalize and hash
         normalized = normalize_text(text)
@@ -90,6 +104,22 @@ class PDFParser:
             logger.error(f"PyMuPDF extraction failed for {pdf_path.name}: {e}")
             return ""
 
+    def _extract_with_pdfplumber(self, pdf_path: Path) -> str:
+        """Extract text using pdfplumber if available."""
+        try:
+            import pdfplumber  # type: ignore
+
+            text_parts: list[str] = []
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text() or ""
+                    if t:
+                        text_parts.append(t)
+            return "\n\n".join(text_parts)
+        except Exception as e:
+            logger.debug(f"pdfplumber extraction failed for {pdf_path.name}: {e}")
+            return ""
+
     def _extract_with_pdfminer(self, pdf_path: Path) -> str:
         """Extract text using pdfminer.six."""
         try:
@@ -98,6 +128,27 @@ class PDFParser:
             return pdfminer_extract(pdf_path)
         except Exception as e:
             logger.error(f"pdfminer extraction failed for {pdf_path.name}: {e}")
+            return ""
+
+    def _extract_with_pdftotext(self, pdf_path: Path) -> str:
+        """Extract text using system 'pdftotext' if available."""
+        try:
+            import shutil
+
+            if not shutil.which("pdftotext"):
+                return ""
+            # Run pdftotext to stdout
+            result = subprocess.run(
+                ["pdftotext", "-layout", str(pdf_path), "-"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                return result.stdout or ""
+            return ""
+        except Exception as e:
+            logger.debug(f"pdftotext extraction failed for {pdf_path.name}: {e}")
             return ""
 
     def _extract_with_ocr(self, pdf_path: Path, cache_dir: Optional[Path] = None) -> str:

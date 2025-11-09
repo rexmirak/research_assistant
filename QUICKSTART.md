@@ -94,7 +94,7 @@ cd /Users/karim/Desktop/projects/research_assistant
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-ollama pull llama3.1:8b
+ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0
 ```
@@ -286,7 +286,7 @@ make grobid-restart
 ollama list
 
 # Pull missing models
-ollama pull llama3.1:8b
+ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 ```
 

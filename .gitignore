@@ -33,6 +33,7 @@ wheels/
 .ruff_cache/
 .pytest_cache/
 .cache/
+cache/
 **/*.sqlite
 **/*.db
 **/*.db-journal
@@ -42,6 +43,18 @@ outputs/
 *.jsonl
 *.csv
 *.xlsx
+*.md
+!README.md
+!USAGE.md
+!QUICKSTART.md
+!PROJECT_SUMMARY.md
+!TROUBLESHOOTING.md
+
+# Test data
+test_pdfs/
+**/need_human_element/
+**/quarantined/
+**/repeated/
 
 # IDE
 .vscode/

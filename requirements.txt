@@ -7,6 +7,7 @@ pyyaml>=6.0
 PyMuPDF>=1.23.0
 pdfminer.six>=20221105
 ocrmypdf>=15.0.0
+pdfplumber>=0.11.0
 
 # Document parsing and metadata
 grobid-client-python>=0.1.0

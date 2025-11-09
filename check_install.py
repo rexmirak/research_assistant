@@ -74,15 +74,42 @@ def check_ollama():
         import ollama
 
         # Try to list models
-        models = ollama.list()
+        models_resp = ollama.list()
         print("✅ Ollama is running")
 
-        # Check for required models
-        model_names = [m["name"] for m in models.get("models", [])]
+        # Normalize response into model names
+        model_names = []
+        items = None
+        if hasattr(models_resp, "models"):
+            items = getattr(models_resp, "models")
+        elif isinstance(models_resp, dict):
+            items = models_resp.get("models") or models_resp.get("data") or []
+        elif isinstance(models_resp, list):
+            items = models_resp
 
-        required_models = ["llama3.1:8b", "nomic-embed-text"]
+        if isinstance(items, list):
+            for m in items:
+                if isinstance(m, str):
+                    model_names.append(m)
+                elif isinstance(m, dict):
+                    name = (
+                        m.get("name")
+                        or m.get("model")
+                        or m.get("id")
+                        or m.get("tag")
+                        or ""
+                    )
+                    if name:
+                        model_names.append(name)
+                else:
+                    # Typed object from ollama client (e.g., Model)
+                    name = getattr(m, "name", None) or getattr(m, "model", None)
+                    if isinstance(name, str) and name:
+                        model_names.append(name)
+
+        required_models = ["deepseek-r1:8b", "nomic-embed-text"]
         for model in required_models:
-            if any(model in name for name in model_names):
+            if any((model == n) or n.startswith(model) or (model in n) for n in model_names):
                 print(f"✅ {model} available")
             else:
                 print(f"⚠️  {model} not found")
@@ -91,7 +118,7 @@ def check_ollama():
         return True
 
     except Exception as e:
-        print(f"❌ Ollama not running: {e}")
+        print(f"❌ Ollama not running or model list unavailable: {e}")
         print("Install from: https://ollama.ai")
         return False
 

@@ -1,6 +1,6 @@
 # Makefile for Research Assistant
 
-.PHONY: help setup install test clean run grobid-start grobid-stop check-services example
+.PHONY: help setup install test clean run grobid-start grobid-stop check-services example models grobid-restart lint format lint-fix test-all clean-all dry-run
 
 help:
 	@echo "Research Assistant - Available Commands"
@@ -14,6 +14,7 @@ help:
 	@echo "  make grobid-start   - Start GROBID Docker container"
 	@echo "  make grobid-stop    - Stop GROBID Docker container"
 	@echo "  make grobid-restart - Restart GROBID"
+	@echo "  make models         - Pull required Ollama models (deepseek-r1:8b, nomic-embed-text)"
 	@echo ""
 	@echo "Running:"
 	@echo "  make example        - Run example pipeline"
@@ -40,8 +41,23 @@ install:
 
 grobid-start:
 	@echo "Starting GROBID service..."
-	@docker ps | grep -q grobid || docker run -d -p 8070:8070 --name grobid lfoppiano/grobid:0.8.0
-	@echo "GROBID started on port 8070"
+	@if ! command -v docker >/dev/null 2>&1; then \
+		echo "Docker not installed. Install Docker Desktop."; \
+		exit 1; \
+	fi
+	@if docker ps -a --format '{{.Names}}' | grep -q '^grobid$$'; then \
+		if docker ps --format '{{.Names}}' | grep -q '^grobid$$'; then \
+			echo "GROBID is already running"; \
+		else \
+			echo "Starting existing GROBID container..."; \
+			docker start grobid >/dev/null; \
+			echo "GROBID started on port 8070"; \
+		fi; \
+	else \
+		echo "Starting new GROBID Docker container..."; \
+		docker run -d -p 8070:8070 --name grobid lfoppiano/grobid:0.8.0 >/dev/null; \
+		echo "GROBID started on port 8070"; \
+	fi
 
 grobid-stop:
 	@echo "Stopping GROBID service..."
@@ -99,6 +115,12 @@ check-services:
 	@echo ""
 	@echo "Ollama:"
 	@ollama list > /dev/null 2>&1 && echo "  ✓ Running" || echo "  ✗ Not running (install from https://ollama.ai)"
+	@if command -v ollama >/dev/null 2>&1; then \
+		REQ="deepseek-r1:8b nomic-embed-text"; \
+		for M in $$REQ; do \
+			if ollama list | grep -q $$M; then echo "    ✓ $$M available"; else echo "    ✗ $$M missing (run: ollama pull $$M)"; fi; \
+		done; \
+	fi
 	@echo ""
 	@echo "Tesseract:"
 	@which tesseract > /dev/null && echo "  ✓ Installed: $$(tesseract --version | head -n1)" || echo "  ✗ Not installed (brew install tesseract)"
@@ -121,7 +143,7 @@ lint:
 	@echo "Flake8..."
 	flake8 core/ utils/ cache/ tests/ *.py
 	@echo "MyPy..."
-	mypy core/ utils/ cache/ --ignore-missing-imports || true
+	mypy core/ utils/ cache/
 
 format:
 	@echo "Formatting code..."
@@ -142,3 +164,13 @@ clean-all: clean
 	rm -rf htmlcov/
 	rm -f .coverage
 	rm -f coverage.xml
+
+models:
+	@echo "Pulling required Ollama models..."
+	@if command -v ollama >/dev/null 2>&1; then \
+		ollama pull deepseek-r1:8b || true; \
+		ollama pull nomic-embed-text || true; \
+	else \
+		echo "Ollama not installed. Install from https://ollama.ai"; \
+		false; \
+	fi

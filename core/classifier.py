@@ -12,7 +12,7 @@ class CategoryClassifier:
 
     def __init__(
         self,
-        model: str = "llama3.1:8b",
+        model: str = "deepseek-r1:8b",
         temperature: float = 0.2,
         confidence_threshold: float = 0.7,
     ):
