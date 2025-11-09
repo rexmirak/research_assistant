@@ -1,0 +1,54 @@
+"""Example configuration file for research assistant."""
+
+# Ollama models
+ollama:
+  summarize_model: "deepseek-r1:8b"
+  embed_model: "nomic-embed-text"
+  classify_model: "deepseek-r1:8b"
+  temperature: 0.1
+  base_url: "http://localhost:11434"
+
+# GROBID service
+grobid:
+  url: "http://localhost:8070"
+  timeout: 60
+  batch_size: 10
+
+# Crossref API
+crossref:
+  enabled: true
+  email: null  # Optional: your email for polite pool
+  timeout: 10
+
+# Deduplication
+dedup:
+  similarity_threshold: 0.95
+  use_minhash: true
+  num_perm: 128
+
+# Scoring
+scoring:
+  relevance_threshold: 6.5
+  min_score: 0.0
+  max_score: 10.0
+  use_abstract_only: false
+
+# File moving
+move:
+  enabled: true
+  track_manifest: true
+  create_symlinks: false
+
+# Cache
+cache:
+  enabled: true
+  backend: "sqlite"
+  ttl_days: 90
+
+# Processing
+processing:
+  workers: 4
+  batch_size: 32
+  max_pages_for_intro: 10
+  ocr_language: "eng"
+  skip_ocr_if_text_exists: true
