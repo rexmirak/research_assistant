@@ -1,7 +1,7 @@
 """Topic-focused summarization using LLM."""
 
 import logging
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 

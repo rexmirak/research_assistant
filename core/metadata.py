@@ -2,7 +2,8 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from utils.grobid_client import GrobidClient
 from utils.text import clean_title, create_bibtex_key
 

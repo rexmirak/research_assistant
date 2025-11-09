@@ -1,7 +1,8 @@
 """Embedding generation using Ollama."""
 
 import logging
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
+
 import numpy as np
 
 logger = logging.getLogger(__name__)

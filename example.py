@@ -7,9 +7,11 @@ on a sample dataset.
 """
 
 from pathlib import Path
-from config import Config
-from cli import process
+
 import click
+
+from cli import process
+from config import Config
 
 
 def main():

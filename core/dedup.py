@@ -1,8 +1,10 @@
 """Deduplication using exact and near-duplicate detection."""
 
 import logging
-from typing import List, Dict, Tuple, Set, Optional
+from typing import Dict, List, Optional, Set, Tuple
+
 from datasketch import MinHash, MinHashLSH
+
 from core.inventory import PDFDocument
 
 logger = logging.getLogger(__name__)

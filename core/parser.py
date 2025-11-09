@@ -3,10 +3,12 @@
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Dict, Optional, Tuple
+
 import fitz  # PyMuPDF
-from utils.text import normalize_text, extract_abstract, extract_introduction
+
 from utils.hash import text_hash
+from utils.text import extract_abstract, extract_introduction, normalize_text
 
 logger = logging.getLogger(__name__)
 

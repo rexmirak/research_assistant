@@ -1,7 +1,7 @@
 """Test scoring functionality."""
 
-from core.scoring import ScoringEngine
 from core.embeddings import EmbeddingGenerator
+from core.scoring import ScoringEngine
 
 
 def test_score_calculation():

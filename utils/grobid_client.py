@@ -1,10 +1,11 @@
 """GROBID client for PDF metadata extraction."""
 
 import logging
-import requests
-from pathlib import Path
-from typing import Optional, Dict, Any
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 

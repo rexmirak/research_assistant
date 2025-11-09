@@ -1,14 +1,16 @@
 """Integration tests for full pipeline."""
 
-import pytest
-from pathlib import Path
-import tempfile
 import shutil
-from unittest.mock import Mock, patch, MagicMock
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
+from cache.cache_manager import CacheManager
+from core.dedup import DedupManager
 from core.inventory import InventoryManager, PDFDocument
 from core.manifest import ManifestManager
-from core.dedup import DedupManager
-from cache.cache_manager import CacheManager
 
 
 @pytest.fixture

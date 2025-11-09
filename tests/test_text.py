@@ -1,13 +1,14 @@
 """Unit tests for text processing utilities."""
 
 import pytest
+
 from utils.text import (
-    normalize_text,
+    clean_title,
+    create_bibtex_key,
     extract_abstract,
     extract_introduction,
-    clean_title,
+    normalize_text,
     truncate_text,
-    create_bibtex_key,
 )
 
 

@@ -1,10 +1,12 @@
 """Unit tests for cache manager."""
 
-import pytest
-from pathlib import Path
-from cache.cache_manager import CacheManager
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from cache.cache_manager import CacheManager
 
 
 @pytest.fixture

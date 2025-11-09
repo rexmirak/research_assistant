@@ -1,9 +1,10 @@
 """Test manifest tracking system."""
 
-from pathlib import Path
-from core.manifest import ManifestManager, CategoryManifest
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+
+from core.manifest import CategoryManifest, ManifestManager
 
 
 def test_manifest_creation():

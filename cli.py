@@ -1,24 +1,26 @@
 """Main CLI for research assistant pipeline."""
 
-import click
 import logging
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import click
+from tqdm import tqdm
+
+from cache.cache_manager import CacheManager
 from config import Config
-from core.inventory import InventoryManager
-from core.parser import PDFParser
-from core.metadata import MetadataExtractor
+from core.classifier import CategoryClassifier
 from core.dedup import DedupManager
 from core.embeddings import EmbeddingGenerator
-from core.scoring import ScoringEngine
-from core.classifier import CategoryClassifier
-from core.summarizer import Summarizer
+from core.inventory import InventoryManager
+from core.manifest import ManifestManager
+from core.metadata import MetadataExtractor
 from core.mover import FileMover
 from core.outputs import OutputGenerator
-from core.manifest import ManifestManager
-from cache.cache_manager import CacheManager
-from tqdm import tqdm
+from core.parser import PDFParser
+from core.scoring import ScoringEngine
+from core.summarizer import Summarizer
 
 # Setup logging
 logging.basicConfig(

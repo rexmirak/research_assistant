@@ -1,8 +1,8 @@
 """Category classification and validation using LLM."""
 
-import logging
 import json
-from typing import Dict, Optional, List, Tuple
+import logging
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

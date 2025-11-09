@@ -1,9 +1,10 @@
 """Directory traversal and PDF inventory."""
 
 import logging
-from pathlib import Path
-from typing import List, Dict, Optional
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
+
 from utils.hash import file_hash
 
 logger = logging.getLogger(__name__)

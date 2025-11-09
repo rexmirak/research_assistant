@@ -1,8 +1,10 @@
 """Relevance scoring and ranking."""
 
 import logging
-from typing import List, Optional, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
+
 from core.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)

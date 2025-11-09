@@ -1,10 +1,10 @@
 """Output generation: JSONL, CSV, and Markdown summaries."""
 
+import csv
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any
-import csv
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
