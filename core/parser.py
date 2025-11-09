@@ -149,7 +149,7 @@ class PDFParser:
         """Get number of pages in PDF."""
         try:
             doc = fitz.open(pdf_path)
-            count = doc.page_count
+            count: int = doc.page_count
             doc.close()
             return count
         except Exception as e:

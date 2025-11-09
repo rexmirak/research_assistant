@@ -47,3 +47,6 @@ isort>=5.12.0
 
 # Git conventional commits
 commitizen>=3.10.0
+
+# Type stubs
+types-requests>=2.31.0

@@ -39,7 +39,10 @@ class ScoringEngine:
 
         # Generate topic embedding
         logger.info("Generating topic embedding...")
-        self.topic_embedding = self.embedding_generator.embed(topic)
+        topic_emb = self.embedding_generator.embed(topic)
+        if topic_emb is None:
+            raise ValueError("Failed to generate topic embedding")
+        self.topic_embedding = topic_emb
 
         if not self.topic_embedding:
             raise ValueError("Failed to generate topic embedding")
@@ -55,6 +58,9 @@ class ScoringEngine:
             Tuple of (score 0-10, include boolean)
         """
         # Compute cosine similarity
+        if paper_embedding is None:
+            return 0.0, False
+        
         similarity = self.embedding_generator.cosine_similarity(
             self.topic_embedding, paper_embedding
         )

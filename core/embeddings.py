@@ -43,8 +43,8 @@ class EmbeddingGenerator:
             import ollama
 
             response = ollama.embeddings(model=self.model, prompt=text)
-
-            return response["embedding"]
+            embedding: List[float] = response["embedding"]
+            return embedding
 
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")

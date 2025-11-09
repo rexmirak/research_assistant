@@ -46,8 +46,7 @@ jobs:
       run: flake8 core/ utils/ cache/ tests/ *.py
     
     - name: Run MyPy
-      run: mypy core/ utils/ cache/ --ignore-missing-imports
-      continue-on-error: true
+      run: mypy core/ utils/ cache/
 
   test:
     name: Tests

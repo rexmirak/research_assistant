@@ -90,7 +90,8 @@ class CacheManager:
         conn.close()
 
         if result:
-            return json.loads(result[0])
+            embedding: List[float] = json.loads(result[0])
+            return embedding
         return None
 
     def set_embedding(self, key: str, embedding: List[float]):
@@ -116,7 +117,8 @@ class CacheManager:
         conn.close()
 
         if result:
-            return json.loads(result[0])
+            metadata: Dict[str, Any] = json.loads(result[0])
+            return metadata
         return None
 
     def set_metadata(self, paper_id: str, metadata: Dict[str, Any]):
@@ -168,7 +170,8 @@ class CacheManager:
         conn.close()
 
         if result:
-            return json.loads(result[0])
+            state: Dict[str, Any] = json.loads(result[0])
+            return state
         return None
 
     def set_processing_state(self, paper_id: str, stage: str, state: Dict[str, Any]):

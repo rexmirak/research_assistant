@@ -3,7 +3,7 @@
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -103,7 +103,7 @@ class GrobidClient:
         Returns:
             Dictionary with extracted fields
         """
-        result = {
+        result: Dict[str, Any] = {
             "title": None,
             "authors": [],
             "year": None,
@@ -123,19 +123,25 @@ class GrobidClient:
                 result["title"] = title_elem.text.strip()
 
             # Extract authors
+            authors_list: List[str] = []
             for author in root.findall(".//tei:sourceDesc//tei:author", ns):
                 persname = author.find(".//tei:persName", ns)
                 if persname is not None:
                     forename = persname.find("tei:forename", ns)
                     surname = persname.find("tei:surname", ns)
                     if forename is not None and surname is not None:
-                        name = f"{forename.text} {surname.text}".strip()
-                        result["authors"].append(name)
+                        forename_text = forename.text or ""
+                        surname_text = surname.text or ""
+                        name = f"{forename_text} {surname_text}".strip()
+                        authors_list.append(name)
+            result["authors"] = authors_list
 
             # Extract year
             date_elem = root.find('.//tei:publicationStmt//tei:date[@type="published"]', ns)
-            if date_elem is not None and date_elem.get("when"):
-                result["year"] = date_elem.get("when")[:4]
+            if date_elem is not None:
+                when_attr = date_elem.get("when")
+                if when_attr and len(when_attr) >= 4:
+                    result["year"] = when_attr[:4]
 
             # Extract venue
             venue_elem = root.find(".//tei:monogr//tei:title", ns)

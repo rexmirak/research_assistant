@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ Respond in JSON format:
             logger.error(f"Failed to parse classification response: {e}")
             return "", 0.0, "Parse error"
 
-    def _parse_json_response(self, response: str) -> Dict:
+    def _parse_json_response(self, response: str) -> Dict[Any, Any]:
         """Parse JSON from LLM response."""
         # Try to find JSON in response
         start = response.find("{")
@@ -196,6 +196,7 @@ Respond in JSON format:
 
         if start >= 0 and end > start:
             json_str = response[start:end]
-            return json.loads(json_str)
+            parsed: Dict[Any, Any] = json.loads(json_str)
+            return parsed
 
         raise ValueError("No JSON found in response")
