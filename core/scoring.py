@@ -60,7 +60,7 @@ class ScoringEngine:
         # Compute cosine similarity
         if paper_embedding is None:
             return 0.0, False
-        
+
         similarity = self.embedding_generator.cosine_similarity(
             self.topic_embedding, paper_embedding
         )
