@@ -53,6 +53,11 @@ def cli():
     "--cache-dir", default="./cache", type=click.Path(path_type=Path), help="Cache directory"
 )
 @click.option(
+    "--purge-cache",
+    is_flag=True,
+    help="Purge the cache directory before processing (deletes cache.db and OCR cache)",
+)
+@click.option(
     "--config-file",
     type=click.Path(exists=True, path_type=Path),
     help="Configuration YAML file (optional)",
@@ -68,6 +73,7 @@ def process(
     topic,
     output_dir,
     cache_dir,
+    purge_cache,
     config_file,
     dry_run,
     resume,
@@ -94,6 +100,19 @@ def process(
 
     # Setup directories
     config.setup_directories()
+
+    # Optionally purge cache
+    if purge_cache:
+        try:
+            import shutil
+
+            logger.info(f"Purging cache at {config.cache_dir} ...")
+            shutil.rmtree(config.cache_dir, ignore_errors=True)
+            config.cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Cache purged.")
+        except Exception as e:
+            logger.error(f"Failed to purge cache: {e}")
+            sys.exit(1)
 
     # Setup file logging
     log_file = (

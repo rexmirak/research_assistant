@@ -50,9 +50,12 @@ class MetadataExtractor:
         """
         # Try GROBID first unless disabled
         metadata = None
+        method = None
         if self.use_grobid:
             metadata = self.grobid_client.process_pdf(pdf_path)
-
+            if metadata and metadata.get("title"):
+                method = "grobid"
+                logger.info(f"[META] {pdf_path.name}: Extracted with GROBID: {metadata}")
         grobid_status = None
         if metadata and "grobid_status" in metadata:
             grobid_status = metadata.get("grobid_status")
@@ -60,10 +63,12 @@ class MetadataExtractor:
         if not metadata or not metadata.get("title"):
             # Fallback to PDF internal metadata BUT preserve grobid_status if we had one
             fallback = self._extract_from_pdf_metadata(pdf_path)
+            logger.info(f"[META] {pdf_path.name}: Extracted from PDF metadata: {fallback}")
             # If still missing authors, try a light-weight first-page heuristic
             if not fallback.get("authors"):
                 inferred = self._infer_title_authors_from_first_page(pdf_path)
                 if inferred:
+                    logger.info(f"[META] {pdf_path.name}: Inferred from first page: {inferred}")
                     if inferred.get("title") and not fallback.get("title"):
                         fallback["title"] = inferred["title"]
                     if inferred.get("authors"):
@@ -71,17 +76,20 @@ class MetadataExtractor:
             if grobid_status and "grobid_status" not in fallback:
                 fallback["grobid_status"] = grobid_status
             metadata = fallback
+            method = method or "pdf_metadata+heuristic"
 
         # Enrich with Crossref if DOI available
         if self.use_crossref and metadata.get("doi"):
             crossref_data = self._enrich_with_crossref(metadata["doi"])
             if crossref_data:
+                logger.info(f"[META] {pdf_path.name}: Enriched with Crossref: {crossref_data}")
                 metadata.update(crossref_data)
 
         # Generate BibTeX
         bibtex = self._generate_bibtex(metadata, pdf_path)
         metadata["bibtex"] = bibtex
 
+        logger.info(f"[META] {pdf_path.name}: FINAL METADATA ({method or 'unknown'}): {metadata}")
         return metadata
 
     def _extract_from_pdf_metadata(self, pdf_path: Path) -> Dict[str, Any]:
