@@ -1,7 +1,9 @@
 """Main CLI for research assistant pipeline."""
 
+import json
 import logging
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -9,19 +11,16 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 
-from cache.cache_manager import CacheManager
 from config import Config
-from core.classifier import CategoryClassifier
 from core.dedup import DedupManager
-from core.embeddings import EmbeddingGenerator
 from core.inventory import InventoryManager
 from core.manifest import ManifestManager
 from core.metadata import MetadataExtractor
 from core.mover import FileMover
 from core.outputs import OutputGenerator
 from core.parser import PDFParser
-from core.scoring import ScoringEngine
 from core.summarizer import Summarizer
+from utils.cache_manager import CacheManager
 
 # Setup logging
 logging.basicConfig(
@@ -65,7 +64,10 @@ def cli():
 @click.option("--dry-run", is_flag=True, help="Run without moving files")
 @click.option("--resume", is_flag=True, help="Resume from cache")
 @click.option(
-    "--relevance-threshold", type=float, default=7.0, help="Minimum relevance score for inclusion (papers below this are quarantined)"
+    "--relevance-threshold",
+    type=float,
+    default=7.0,
+    help="Minimum relevance score for inclusion (papers below this are quarantined)",
 )
 @click.option("--workers", type=int, default=4, help="Number of worker processes")
 def process(
@@ -103,9 +105,9 @@ def process(
 
     # Optionally purge cache
     if purge_cache:
-        try:
-            import shutil
+        import shutil
 
+        try:
             logger.info(f"Purging cache at {config.cache_dir} ...")
             shutil.rmtree(config.cache_dir, ignore_errors=True)
             config.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -125,7 +127,7 @@ def process(
     logging.getLogger().addHandler(file_handler)
 
     logger.info("=" * 80)
-    logger.info("Research Assistant Pipeline Starting")
+    logger.info("Research Assistant LLM-Driven Pipeline Starting")
     logger.info(f"Root Directory: {root_dir}")
     logger.info(f"Topic: {topic}")
     logger.info(f"Output Directory: {output_dir}")
@@ -134,61 +136,24 @@ def process(
 
     try:
         # Initialize components
-        logger.info("Initializing components...")
+        logger.info("[INIT] Initializing pipeline components...")
         cache_manager = CacheManager(config.cache_dir, config.cache.ttl_days)
         manifest_manager = ManifestManager(config.output_dir / "manifests")
         inventory_manager = InventoryManager(config.root_dir)
         pdf_parser = PDFParser(
             config.processing.ocr_language, config.processing.skip_ocr_if_text_exists
         )
-        metadata_extractor = MetadataExtractor(
-            config.grobid.url, config.crossref.enabled, config.crossref.email
-        )
-        # GROBID preflight: disable if not alive to avoid mass non-XML warnings
-        try:
-            if not metadata_extractor.grobid_client.is_alive():
-                logger.warning(
-                    f"GROBID not responding at {config.grobid.url}; will skip GROBID and use local metadata heuristics."
-                )
-                metadata_extractor.use_grobid = False
-        except Exception:
-            logger.warning(
-                f"GROBID preflight check failed; will skip GROBID and use local metadata heuristics."
-            )
-            metadata_extractor.use_grobid = False
+        metadata_extractor = MetadataExtractor(config.crossref.enabled, config.crossref.email)
         dedup_manager = DedupManager(config.dedup.similarity_threshold, config.dedup.num_perm)
-        embedding_generator = EmbeddingGenerator(
-            config.ollama.embed_model, config.ollama.base_url, config.processing.batch_size
-        )
-
-        # Test connections
-        logger.info("Testing service connections...")
-        if not embedding_generator.test_connection():
-            logger.error("Ollama connection failed. Please ensure Ollama is running.")
-            sys.exit(1)
-
-        # Initialize scoring engine
-        scoring_engine = ScoringEngine(
-            config.topic,
-            embedding_generator,
-            config.scoring.min_score,
-            config.scoring.max_score,
-            config.scoring.relevance_threshold,
-        )
-
-        classifier = CategoryClassifier(config.ollama.classify_model, config.ollama.temperature)
-
         summarizer = Summarizer(config.ollama.summarize_model, config.ollama.temperature)
-
         file_mover = FileMover(
             config.root_dir, manifest_manager, config.dry_run, config.move.create_symlinks
         )
-
         output_generator = OutputGenerator(config.output_dir)
 
         # Stage 1: Inventory
         logger.info("\n" + "=" * 80)
-        logger.info("STAGE 1: Inventory")
+        logger.info("[STAGE 1] Inventory: Scanning for PDFs and categories...")
         logger.info("=" * 80)
         documents = inventory_manager.scan()
         summary = inventory_manager.summary()
@@ -197,385 +162,460 @@ def process(
 
         # Stage 2: Parse and extract metadata
         logger.info("\n" + "=" * 80)
-        logger.info("STAGE 2: Parsing and Metadata Extraction")
+        logger.info("[STAGE 2] LLM Metadata Extraction...")
         logger.info("=" * 80)
 
         paper_data = {}
         diversion_counters = {
-            "grobid_failure": 0,
             "short_text": 0,
             "missing_core_metadata": 0,
         }
 
-        for doc in tqdm(documents, desc="Processing PDFs"):
-            paper_id = doc.file_hash[:12]
+        # --- Ensure manifests, index, and CSV exist at process start ---
+        manifest_manager.save_all()
+        output_generator.write_jsonl([], filename="index.jsonl")
+        output_generator.write_csv([], filename="index.csv")
+    except Exception as e:
+        logger.error(f"Pipeline initialization failed: {e}")
+        sys.exit(1)
 
-            # Check manifest to avoid reprocessing moved papers
+    start_time = time.time()
+    processed_count = 0
+    total_papers = len(documents)
+
+    def log_to_file(msg):
+        logger.info(msg)
+
+    def process_single_doc(doc):
+        paper_id = doc.file_hash[:12]
+
+        # Check manifest to avoid reprocessing moved papers
+        manifest = manifest_manager.get_manifest(doc.category)
+        if manifest.should_skip(paper_id):
+            return None
+
+        # Check cache
+        cached_text = cache_manager.get_text(paper_id) if resume else None
+        cached_metadata = cache_manager.get_metadata(paper_id) if resume else None
+
+        if cached_text and cached_metadata:
+            text, text_hash = cached_text
+            metadata = cached_metadata
+            logger.info(f"[CACHE] Used cached text and metadata for {doc.file_name}")
+        else:
+            logger.info(f"[LLM][EXTRACT] Extracting metadata for {doc.file_name} using LLM...")
+            text, text_hash = pdf_parser.extract_text(doc.file_path, config.cache_dir)
+            sections = pdf_parser.extract_sections(text)
+            metadata = metadata_extractor._extract_with_llm(doc.file_path)
+            if not metadata.get("abstract"):
+                metadata["abstract"] = sections.get("abstract")
+            cache_manager.set_text(paper_id, text, text_hash)
+            cache_manager.set_metadata(paper_id, metadata)
+
+        # Diversion logic: only divert if both title and authors are missing (unreadable metadata)
+        title_missing = not bool(metadata.get("title"))
+        authors_missing = len(metadata.get("authors", [])) == 0
+        missing_core = title_missing and authors_missing
+        if missing_core:
+            logger.info(
+                f"[STAGE 3.1][{doc.file_name}] Diversion: missing core metadata, diverting to need_human_element."
+            )
             manifest = manifest_manager.get_manifest(doc.category)
-            if manifest.should_skip(paper_id):
-                logger.debug(f"Skipping {doc.file_name} (moved or duplicate)")
-                continue
-
-            # Check cache
-            cached_text = cache_manager.get_text(paper_id) if resume else None
-            cached_metadata = cache_manager.get_metadata(paper_id) if resume else None
-
-            if cached_text and cached_metadata:
-                text, text_hash = cached_text
-                metadata = cached_metadata
-                logger.debug(f"Using cached data for {doc.file_name}")
-            else:
-                # Parse PDF
-                text, text_hash = pdf_parser.extract_text(doc.file_path, config.cache_dir)
-                sections = pdf_parser.extract_sections(text)
-
-                # Extract metadata
-                metadata = metadata_extractor.extract(doc.file_path)
-
-                # Use GROBID abstract if available, otherwise extract from text
-                if not metadata.get("abstract"):
-                    metadata["abstract"] = sections.get("abstract")
-
-                # Cache results
-                cache_manager.set_text(paper_id, text, text_hash)
-                cache_manager.set_metadata(paper_id, metadata)
-
-            # Diversion logic: decide if this PDF needs manual review
-            grobid_status = (metadata or {}).get("grobid_status")
-            grobid_failed = grobid_status in {
-                "request_failed",
-                "non_xml",
-                "parse_error",
-                "unexpected_error",
-            }
-            short_text = len((text or "").strip()) < 100
-            # Missing core ONLY if BOTH title and authors are missing
-            title_missing = not bool(metadata.get("title"))
-            authors_missing = len(metadata.get("authors", [])) == 0
-            missing_core = title_missing and authors_missing
-
-            # Divert only if text is clearly unusable OR grobid failed AND we still lack core metadata
-            should_divert = short_text or (grobid_failed and missing_core)
-
-            if should_divert:
-                # Ensure manifest has an entry before recording the move so move tracking works
-                manifest = manifest_manager.get_manifest(doc.category)
-                manifest.add_paper(
-                    paper_id=paper_id,
-                    path=str(doc.file_path),
-                    content_hash=text_hash,
-                    original_category=doc.category,
-                )
-
-                # Increment counters (each reason separately; a file can contribute to multiple)
-                if grobid_failed:
-                    diversion_counters["grobid_failure"] += 1
-                if short_text:
-                    diversion_counters["short_text"] += 1
-                if missing_core:
-                    diversion_counters["missing_core_metadata"] += 1
-
-                diversion_reasons = []
-                if grobid_failed:
-                    diversion_reasons.append(f"grobid_failure:{grobid_status}")
-                if short_text:
-                    diversion_reasons.append("short_text")
-                if missing_core:
-                    diversion_reasons.append("missing_core_metadata")
-                combined_reason = ", ".join(diversion_reasons) if diversion_reasons else "diversion"
-                file_mover.move_to_category(
-                    paper_id=paper_id,
-                    current_path=doc.file_path,
-                    from_category=doc.category,
-                    to_category="need_human_element",
-                    reason=f"Manual review required: {combined_reason}",
-                )
-                logger.info(
-                    f"Diverted {doc.file_name} to need_human_element (reasons: {combined_reason})"
-                )
-                continue
-
-            # Store paper data
-            paper_data[paper_id] = {
-                "doc": doc,
-                "text": text,
-                "text_hash": text_hash,
-                "metadata": metadata,
-                "sections": pdf_parser.extract_sections(text),
-            }
-
-            # Add to manifest
             manifest.add_paper(
                 paper_id=paper_id,
                 path=str(doc.file_path),
                 content_hash=text_hash,
                 original_category=doc.category,
             )
-
-        manifest_manager.save_all()
-        total_diverted_unique = sum(1 for _ in (manifest_manager.get_manifest("need_human_element").entries.values()) ) if "need_human_element" in manifest_manager.manifests else 0
-        if total_diverted_unique:
-            logger.info("Diversion summary (need_human_element):")
-            logger.info(f"  Total diverted (unique papers): {total_diverted_unique}")
+            diversion_counters["missing_core_metadata"] += 1
+            file_mover.move_to_category(
+                paper_id=paper_id,
+                current_path=doc.file_path,
+                from_category=doc.category,
+                to_category="need_human_element",
+                reason="Manual review required: missing_core_metadata",
+            )
             logger.info(
-                "  Reasons (counts; a paper may appear in multiple reason tallies): "
-                + ", ".join(
-                    f"{reason}={count}" for reason, count in diversion_counters.items()
-                )
+                f"[DIVERT] {doc.file_name} diverted to need_human_element (unreadable metadata)"
             )
+            # Update outputs after diversion
+            manifest_manager.save_all()
+            output_generator.write_jsonl([], filename="index.jsonl")
+            output_generator.write_csv([], filename="index.csv")
+            return None
 
-        # Stage 3: Deduplication
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 3: Deduplication")
-        logger.info("=" * 80)
+        # Always run LLM scoring/categorization as a separate step
+        # LLM categorization
+        log_to_file(f"[STAGE 3.2][{doc.file_name}] LLM scoring/categorization...")
+        cat_score = metadata_extractor._llm_categorize_and_score(
+            title=metadata.get("title", ""),
+            abstract=metadata.get("abstract", ""),
+            topic=config.topic,
+            available_categories=summary["categories"] if "categories" in summary else None,
+        )
+        metadata.update(cat_score)
 
-        # Exact duplicates
-        exact_dups = dedup_manager.find_exact_duplicates(documents)
-
-        # Near duplicates
-        paper_texts = {pid: data["text"] for pid, data in paper_data.items()}
-        paper_names = {pid: data["doc"].file_name for pid, data in paper_data.items()}
-        near_dups = dedup_manager.find_near_duplicates(paper_texts, paper_names)
-
-        # Move duplicates
-        for canonical, duplicates in near_dups.items():
-            for dup_id in duplicates:
-                if dup_id in paper_data:
-                    dup_data = paper_data[dup_id]
-                    file_mover.move_to_repeated(
-                        paper_id=dup_id,
-                        current_path=dup_data["doc"].file_path,
-                        from_category=dup_data["doc"].category,
-                        canonical_id=canonical,
-                    )
-                    # Mark in manifest
-                    manifest = manifest_manager.get_manifest(dup_data["doc"].category)
-                    manifest.mark_duplicate(dup_id, canonical)
-
+        # After categorization, update manifest and outputs
+        # (status logic copied from main output block)
+        if not metadata.get("include", False):
+            status = "quarantined"
+        elif doc.category == "need_human_element":
+            status = "diverted"
+        else:
+            status = "active"
+        manifest = manifest_manager.get_manifest(doc.category)
+        manifest.add_paper(
+            paper_id=paper_id,
+            path=str(doc.file_path),
+            content_hash=text_hash,
+            status=status,
+            original_category=doc.category,
+        )
         manifest_manager.save_all()
 
-        # Stage 4: Embeddings and Scoring
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 4: Relevance Scoring")
-        logger.info("=" * 80)
+        # Update index and CSV after each categorization
+        # Build a minimal record for this paper
+        record = {
+            "paper_id": paper_id,
+            "title": metadata.get("title", ""),
+            "authors": metadata.get("authors", []),
+            "year": metadata.get("year"),
+            "venue": metadata.get("venue"),
+            "doi": metadata.get("doi"),
+            "category": doc.category,
+            "original_category": doc.category,
+            "relevance_score": metadata.get("relevance_score"),
+            "include": metadata.get("include", False),
+            "status": status,
+            "duplicate_of": None,
+            "is_duplicate": False,
+            "original_path": str(doc.file_path),
+            "current_path": str(doc.file_path),
+            "bibtex": metadata.get("bibtex", ""),
+            "summary_file": f"summaries/{doc.category}.md",
+            "notes": "",
+        }
+        # Read current index, append or update this record, and write back
+        index_path = config.output_dir / "index.jsonl"
+        try:
+            existing = {}
+            if index_path.exists():
+                with open(index_path, "r") as f:
+                    for line in f:
+                        try:
+                            rec = json.loads(line)
+                            existing[rec["paper_id"]] = rec
+                        except Exception:
+                            pass
+            existing[paper_id] = record
+            with open(index_path, "w") as f:
+                for rec in existing.values():
+                    f.write(json.dumps(rec) + "\n")
+            # Also update CSV
+            output_generator.write_csv(list(existing.values()), filename="index.csv")
+        except Exception as e:
+            log_to_file(f"[ERROR] Failed to update index after categorization: {e}")
 
-        paper_embeddings = {}
-        for paper_id, data in tqdm(list(paper_data.items()), desc="Generating embeddings"):
-            # Check cache
-            cache_key = f"{paper_id}_embed"
-            cached_embedding = cache_manager.get_embedding(cache_key) if resume else None
+        # Time estimation
+        nonlocal processed_count
+        processed_count += 1
+        elapsed = time.time() - start_time
+        avg_time = elapsed / processed_count if processed_count else 0
+        remaining = total_papers - processed_count
+        eta = avg_time * remaining
+        log_to_file(
+            f"[TIME] Processed {processed_count}/{total_papers} papers. Elapsed: {elapsed:.1f}s, ETA: {eta/60:.1f} min"
+        )
 
-            if cached_embedding:
-                paper_embeddings[paper_id] = cached_embedding
-            else:
-                # Generate embedding
-                metadata = data["metadata"]
-                sections = data["sections"]
+        # Sleep after every 10 PDFs
+        if processed_count % 10 == 0:
+            log_to_file(f"[SLEEP] Sleeping for 10 minutes after {processed_count} papers...")
+            time.sleep(600)
 
-                embedding = embedding_generator.embed_paper(
-                    metadata.get("title", ""),
-                    sections.get("abstract"),
-                    sections.get("introduction"),
-                )
-
-                if embedding:
-                    paper_embeddings[paper_id] = embedding
-                    cache_manager.set_embedding(cache_key, embedding)
-
-        # Score papers
-        scores = scoring_engine.score_papers_batch(paper_embeddings)
-
-        # Store scores
-        for paper_id, (score, include) in scores.items():
-            paper_data[paper_id]["relevance_score"] = score
-            paper_data[paper_id]["include"] = include
-
-        # Log statistics
-        stats = scoring_engine.get_statistics(scores)
-        logger.info(f"Scoring Statistics:")
-        logger.info(f"  Total: {stats['total_papers']}")
-        logger.info(f"  Included: {stats['included']}")
-        logger.info(f"  Excluded: {stats['excluded']}")
-        logger.info(f"  Mean Score: {stats['mean_score']:.2f}")
-
-        # Stage 5: Category Validation
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 5: Category Validation")
-        logger.info("=" * 80)
-
-        categories = inventory_manager.get_categories()
-
-        def classify_paper_task(paper_id, data):
-            """Classify a single paper and return move decision."""
-            metadata = data["metadata"]
-            current_category = data["doc"].category
-
-            recommended_cat, confidence, reason = classifier.classify_paper(
-                title=metadata.get("title", ""),
-                abstract=data["sections"].get("abstract"),
-                current_category=current_category,
-                available_categories=categories,
-                topic=config.topic,
+        # Move paper to the correct category folder if categorization is available
+        new_category = metadata.get("category")
+        if new_category and new_category != doc.category:
+            logger.info(
+                f"[STAGE 3.3][{doc.file_name}] Moving to category '{new_category}' by LLM categorization."
             )
+            new_path = file_mover.move_to_category(
+                paper_id=paper_id,
+                current_path=doc.file_path,
+                from_category=doc.category,
+                to_category=new_category,
+                reason="LLM categorization",
+            )
+            logger.info(
+                f"[MOVE] {doc.file_name} moved to category '{new_category}' by LLM categorization."
+            )
+            # Update doc object in memory to reflect new location
+            if new_path:
+                doc.category = new_category
+                doc.file_path = new_path
+            # Update outputs after move
+            manifest_manager.save_all()
+            output_generator.write_jsonl([], filename="index.jsonl")
+            output_generator.write_csv([], filename="index.csv")
 
-            should_move = classifier.should_recategorize(current_category, recommended_cat, confidence)
-            return paper_id, data, current_category, recommended_cat, reason, should_move
+        # Store paper data
+        return (
+            paper_id,
+            {
+                "doc": doc,
+                "text": text,
+                "text_hash": text_hash,
+                "metadata": metadata,
+                "sections": pdf_parser.extract_sections(text),
+                "include": metadata.get("include", False),
+                "relevance_score": metadata.get("relevance_score"),
+            },
+        )
 
-        # Parallelize classification with 2 workers
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            paper_items = list(paper_data.items())
-            results = list(tqdm(
-                executor.map(lambda item: classify_paper_task(item[0], item[1]), paper_items),
-                total=len(paper_items),
-                desc="Validating categories"
-            ))
+    # Parallelize LLM processing for extraction, categorization, and scoring
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        results = list(
+            tqdm(
+                executor.map(process_single_doc, documents),
+                total=len(documents),
+                desc="Processing PDFs",
+                leave=True,
+                ncols=100,
+            )
+        )
+    # Filter out None results (skipped/diverted)
+    for result in results:
+        if result is not None:
+            paper_id, data = result
+            paper_data[paper_id] = data
 
-        # Process results sequentially (file moves must be sequential)
-        for paper_id, data, current_category, recommended_cat, reason, should_move in results:
-            if should_move:
+    # --- Manifest tracking for all processed papers ---
+    for paper_id, data in paper_data.items():
+        doc = data["doc"]
+        # Determine status
+        if not data.get("include", False):
+            status = "quarantined"
+        elif doc.category == "need_human_element":
+            status = "diverted"
+        else:
+            status = "active"
+        # Add to manifest of final category
+        manifest = manifest_manager.get_manifest(doc.category)
+        manifest.add_paper(
+            paper_id=paper_id,
+            path=str(doc.file_path),
+            content_hash=data["text_hash"],
+            status=status,
+            original_category=doc.category,
+        )
+    manifest_manager.save_all()
+    # Only log big stage labels to console
+    print("All manifests saved after deduplication and moves.")
+    total_diverted_unique = (
+        sum(1 for _ in (manifest_manager.get_manifest("need_human_element").entries.values()))
+        if "need_human_element" in manifest_manager.manifests
+        else 0
+    )
+    if total_diverted_unique:
+        logger.info("Diversion summary (need_human_element):")
+        logger.info(f"  Total diverted (unique papers): {total_diverted_unique}")
+        logger.info(
+            "  Reasons (counts; a paper may appear in multiple reason tallies): "
+            + ", ".join(f"{reason}={count}" for reason, count in diversion_counters.items())
+        )
+
+    # Stage 3: Deduplication
+    print("\n" + "=" * 80)
+    print("[STAGE 3] Deduplication: Detecting and moving duplicates...")
+    print("=" * 80)
+
+    # Exact duplicates
+    exact_dups = dedup_manager.find_exact_duplicates(documents)
+
+    # Near duplicates
+    paper_texts = {pid: data["text"] for pid, data in paper_data.items()}
+    paper_names = {pid: data["doc"].file_name for pid, data in paper_data.items()}
+    near_dups = dedup_manager.find_near_duplicates(paper_texts, paper_names)
+
+    # Move duplicates
+    for canonical, duplicates in near_dups.items():
+        for dup_id in duplicates:
+            if dup_id in paper_data:
+                dup_data = paper_data[dup_id]
                 logger.info(
-                    f"Recategorizing {data['doc'].file_name}: {current_category} -> {recommended_cat} ({reason})"
+                    f"[STAGE 3.4][{dup_data['doc'].file_name}] Deduplication: moving to repeated (duplicate of {canonical})"
                 )
-                new_path = file_mover.move_to_category(
-                    paper_id=paper_id,
-                    current_path=data["doc"].file_path,
-                    from_category=current_category,
-                    to_category=recommended_cat,
-                    reason=reason,
+                new_path = file_mover.move_to_repeated(
+                    paper_id=dup_id,
+                    current_path=dup_data["doc"].file_path,
+                    from_category=dup_data["doc"].category,
+                    canonical_id=canonical,
                 )
+                # Mark in manifest
+                manifest = manifest_manager.get_manifest(dup_data["doc"].category)
+                manifest.mark_duplicate(dup_id, canonical)
+                # Update doc object in memory
                 if new_path:
-                    data["doc"].category = recommended_cat
+                    dup_data["doc"].category = "repeated"
+                    dup_data["doc"].file_path = new_path
+                # Update outputs after dedup move
+                manifest_manager.save_all()
+                output_generator.write_jsonl([], filename="index.jsonl")
+                output_generator.write_csv([], filename="index.csv")
 
-        # Stage 6: Quarantine low-relevance papers
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 6: Quarantine Unrelated Papers")
-        logger.info("=" * 80)
+    manifest_manager.save_all()
 
-        # Use the same threshold as inclusion - papers not included should be quarantined
-        for paper_id, data in list(paper_data.items()):
-            if data.get("relevance_score", 0) < relevance_threshold:
-                logger.info(
-                    f"Quarantining {data['doc'].file_name} (score: {data['relevance_score']:.1f})"
-                )
-                file_mover.move_to_quarantined(
-                    paper_id=paper_id,
-                    current_path=data["doc"].file_path,
-                    from_category=data["doc"].category,
-                    reason=f"Low relevance score: {data['relevance_score']:.1f}",
-                )
+    # Stage 4: Embeddings and Scoring
+    print("\n" + "=" * 80)
+    print("[STAGE 4] LLM Relevance Scoring and Categorization...")
+    print("=" * 80)
 
-        # Stage 7: Summarization
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 7: Generating Summaries")
-        logger.info("=" * 80)
+    # Stage 5: Quarantine low-relevance papers
+    print("\n" + "=" * 80)
+    print("[STAGE 5] Quarantine Unrelated Papers (LLM include: False)...")
+    print("=" * 80)
 
-        category_summaries = {}
-
-        def summarize_paper_task(paper_id, data):
-            """Summarize a single paper and return result."""
-            # Only summarize included papers
-            if not data.get("include", False):
-                return None
-
-            metadata = data["metadata"]
-            sections = data["sections"]
-
-            summary = summarizer.summarize_paper(
-                title=metadata.get("title", ""),
-                abstract=sections.get("abstract"),
-                intro=sections.get("introduction"),
-                topic=config.topic,
-                metadata=metadata,
+    # Quarantine papers not included by LLM
+    for paper_id, data in list(paper_data.items()):
+        if not data.get("include", False):
+            score = data.get("relevance_score")
+            score_str = f"{score:.1f}" if isinstance(score, (int, float)) else "N/A"
+            logger.info(
+                f"[STAGE 3.5][{data['doc'].file_name}] Quarantine: LLM include: False, score: {score_str}"
             )
+            new_path = file_mover.move_to_quarantined(
+                paper_id=paper_id,
+                current_path=data["doc"].file_path,
+                from_category=data["doc"].category,
+                reason=f"LLM include: False, score: {score_str}",
+            )
+            # Update doc object in memory
+            if new_path:
+                data["doc"].category = "quarantined"
+                data["doc"].file_path = new_path
+            # Update outputs after quarantine
+            manifest_manager.save_all()
+            output_generator.write_jsonl([], filename="index.jsonl")
+            output_generator.write_csv([], filename="index.csv")
 
-            return paper_id, data, summary
+    # Stage 6: Summarization
+    print("\n" + "=" * 80)
+    print("[STAGE 6] Generating Summaries with LLM...")
+    print("=" * 80)
 
-        # Parallelize summarization with 2 workers
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            paper_items = list(paper_data.items())
-            results = list(tqdm(
+    category_summaries = {}
+
+    def summarize_paper_task(paper_id, data):
+        """Summarize a single paper and return result."""
+        # Only summarize included papers
+        if not data.get("include", False):
+            return None
+
+        metadata = data["metadata"]
+        sections = data["sections"]
+
+        summary = summarizer.summarize_paper(
+            title=metadata.get("title", ""),
+            abstract=sections.get("abstract"),
+            intro=sections.get("introduction"),
+            topic=config.topic,
+            metadata=metadata,
+            full_text=data.get("text", None),
+        )
+
+        return paper_id, data, summary
+
+    # Parallelize summarization with 2 workers
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        paper_items = list(paper_data.items())
+        results = list(
+            tqdm(
                 executor.map(lambda item: summarize_paper_task(item[0], item[1]), paper_items),
                 total=len(paper_items),
-                desc="Generating summaries"
-            ))
-
-        # Process results
-        for result in results:
-            if result is None:
-                continue
-            
-            paper_id, data, summary = result
-            data["summary"] = summary
-
-            # Group by category
-            category = data["doc"].category
-            if category not in category_summaries:
-                category_summaries[category] = []
-
-            metadata = data["metadata"]
-            category_summaries[category].append(
-                {
-                    "title": metadata.get("title", ""),
-                    "authors": metadata.get("authors", []),
-                    "year": metadata.get("year"),
-                    "venue": metadata.get("venue"),
-                    "relevance_score": data.get("relevance_score"),
-                    "summary": summary,
-                    "bibtex": metadata.get("bibtex", ""),
-                }
+                desc="Generating summaries",
             )
+        )
 
-        # Write category summaries
-        for category, summaries in category_summaries.items():
-            output_generator.write_category_summary(category, summaries)
+    # Process results
+    for result in results:
+        if result is None:
+            continue
 
-        # Stage 8: Generate Outputs
-        logger.info("\n" + "=" * 80)
-        logger.info("STAGE 8: Generating Outputs")
-        logger.info("=" * 80)
+        paper_id, data, summary = result
+        data["summary"] = summary
 
-        # Build output records
-        records = []
-        for paper_id, data in paper_data.items():
-            metadata = data["metadata"]
+        # Group by category
+        category = data["doc"].category
+        if category not in category_summaries:
+            category_summaries[category] = []
 
-            record = {
-                "paper_id": paper_id,
+        metadata = data["metadata"]
+        category_summaries[category].append(
+            {
                 "title": metadata.get("title", ""),
                 "authors": metadata.get("authors", []),
                 "year": metadata.get("year"),
                 "venue": metadata.get("venue"),
-                "doi": metadata.get("doi"),
-                "category": data["doc"].category,
-                "original_category": data["doc"].category,
                 "relevance_score": data.get("relevance_score"),
-                "include": data.get("include", False),
-                "status": "active",
-                "duplicate_of": None,
-                "is_duplicate": False,
-                "original_path": str(data["doc"].file_path),
-                "current_path": str(data["doc"].file_path),
+                "summary": summary,
                 "bibtex": metadata.get("bibtex", ""),
-                "summary_file": f"summaries/{data['doc'].category}.md",
-                "notes": "",
             }
+        )
 
-            records.append(record)
+    # Write category summaries
+    for category, summaries in category_summaries.items():
+        output_generator.write_category_summary(category, summaries)
+        logger.info(f"Wrote summary markdown for category: {category}")
 
-        # Write outputs
-        output_generator.write_jsonl(records)
-        output_generator.write_csv(records)
-        output_generator.write_statistics(stats, "statistics.json")
+    # Stage 7: Generate Outputs
+    print("\n" + "=" * 80)
+    print("[STAGE 7] Writing Outputs...")
+    print("=" * 80)
 
-        logger.info("\n" + "=" * 80)
-        logger.info("Pipeline Complete!")
-        logger.info(f"Processed: {len(paper_data)} papers")
-        logger.info(f"Outputs written to: {config.output_dir}")
-        logger.info("=" * 80)
+    # Build output records
+    records = []
+    for paper_id, data in paper_data.items():
+        metadata = data["metadata"]
+        doc = data["doc"]
+        # Determine status
+        if not data.get("include", False):
+            status = "quarantined"
+        elif doc.category == "need_human_element":
+            status = "diverted"
+        else:
+            status = "active"
+        record = {
+            "paper_id": paper_id,
+            "title": metadata.get("title", ""),
+            "authors": metadata.get("authors", []),
+            "year": metadata.get("year"),
+            "venue": metadata.get("venue"),
+            "doi": metadata.get("doi"),
+            "category": doc.category,
+            "original_category": doc.category,
+            "relevance_score": data.get("relevance_score"),
+            "include": data.get("include", False),
+            "status": status,
+            "duplicate_of": None,
+            "is_duplicate": False,
+            "original_path": str(doc.file_path),
+            "current_path": str(doc.file_path),
+            "bibtex": metadata.get("bibtex", ""),
+            "summary_file": f"summaries/{doc.category}.md",
+            "notes": "",
+        }
+        records.append(record)
 
-    except Exception as e:
-        logger.error(f"Pipeline failed: {e}", exc_info=True)
-        sys.exit(1)
+    # Write outputs
+    output_generator.write_jsonl(records)
+    output_generator.write_csv(records)
+    logger.info("Wrote index.jsonl and index.csv outputs.")
+    # output_generator.write_statistics(stats, "statistics.json")
+
+    print("\n" + "=" * 80)
+    print("Pipeline Complete!")
+    print(f"Processed: {len(paper_data)} papers")
+    print(f"Outputs written to: {config.output_dir}")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

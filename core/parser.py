@@ -107,7 +107,7 @@ class PDFParser:
     def _extract_with_pdfplumber(self, pdf_path: Path) -> str:
         """Extract text using pdfplumber if available."""
         try:
-            import pdfplumber  # type: ignore
+            import pdfplumber
 
             text_parts: list[str] = []
             with pdfplumber.open(str(pdf_path)) as pdf:

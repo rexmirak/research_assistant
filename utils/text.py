@@ -21,7 +21,7 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def extract_abstract(text: str, max_length: int = 2000) -> Optional[str]:
+def extract_abstract(text: str, max_length: int = 4000) -> Optional[str]:
     """
     Extract abstract from paper text.
 

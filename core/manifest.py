@@ -138,14 +138,11 @@ class CategoryManifest:
         self.content_hashes.add(content_hash)
         return entry
 
-    def mark_moved_out(self, paper_id: str, to_category: str, reason: str):
-        """Mark paper as moved out to another category."""
+    def remove_paper(self, paper_id: str):
+        """Remove a paper from the manifest entirely."""
         if paper_id in self.entries:
-            entry = self.entries[paper_id]
-            entry.status = "moved_out"
-            entry.moved_to = to_category
-            entry.moved_at = datetime.now().isoformat()
-            entry.reason = reason
+            entry = self.entries.pop(paper_id)
+            self.content_hashes.discard(entry.content_hash)
 
     def mark_moved_in(self, paper_id: str, from_category: str, new_path: str, reason: str):
         """Mark paper as moved in from another category."""
@@ -221,27 +218,16 @@ class ManifestManager:
         self, paper_id: str, from_category: str, to_category: str, new_path: str, reason: str
     ):
         """
-        Record a paper move between categories.
-
-        Args:
-            paper_id: Paper identifier
-            from_category: Source category
-            to_category: Destination category
-            new_path: New file path
-            reason: Reason for move
+        Record a paper move between categories, removing from source manifest and adding to destination.
         """
-        # Mark moved out in source
         source_manifest = self.get_manifest(from_category)
-        source_manifest.mark_moved_out(paper_id, to_category, reason)
-        source_manifest.save()
-
-        # Mark moved in at destination
-        dest_manifest = self.get_manifest(to_category)
-
-        # Get original entry data
         source_entry = source_manifest.entries.get(paper_id)
         if source_entry:
-            # Create entry in destination
+            # Remove from source manifest
+            source_manifest.remove_paper(paper_id)
+            source_manifest.save()
+            # Add to destination manifest
+            dest_manifest = self.get_manifest(to_category)
             dest_manifest.add_paper(
                 paper_id=paper_id,
                 path=new_path,
@@ -250,10 +236,8 @@ class ManifestManager:
                 original_category=source_entry.original_category,
             )
             dest_manifest.mark_moved_in(paper_id, from_category, new_path, reason)
-
-        dest_manifest.save()
-
-        logger.info(f"Recorded move: {paper_id} from {from_category} to {to_category}")
+            dest_manifest.save()
+            logger.info(f"Recorded move: {paper_id} from {from_category} to {to_category}")
 
     def save_all(self):
         """Save all manifests."""

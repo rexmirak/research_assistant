@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cache.cache_manager import CacheManager
+from utils.cache_manager import CacheManager
 
 
 @pytest.fixture

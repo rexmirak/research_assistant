@@ -18,14 +18,6 @@ class OllamaConfig(BaseModel):
     base_url: str = "http://localhost:11434"
 
 
-class GrobidConfig(BaseModel):
-    """GROBID configuration."""
-
-    url: str = "http://localhost:8070"
-    timeout: int = 60
-    batch_size: int = 10
-
-
 class CrossrefConfig(BaseModel):
     """Crossref API configuration."""
 
@@ -81,7 +73,6 @@ class Config(BaseModel):
     """Main configuration."""
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
-    grobid: GrobidConfig = Field(default_factory=GrobidConfig)
     crossref: CrossrefConfig = Field(default_factory=CrossrefConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
@@ -130,7 +121,6 @@ class Config(BaseModel):
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             (self.cache_dir / "ocr").mkdir(exist_ok=True)
-            (self.cache_dir / "grobid").mkdir(exist_ok=True)
             (self.cache_dir / "embeddings").mkdir(exist_ok=True)
 
 

@@ -92,13 +92,7 @@ def check_ollama():
                 if isinstance(m, str):
                     model_names.append(m)
                 elif isinstance(m, dict):
-                    name = (
-                        m.get("name")
-                        or m.get("model")
-                        or m.get("id")
-                        or m.get("tag")
-                        or ""
-                    )
+                    name = m.get("name") or m.get("model") or m.get("id") or m.get("tag") or ""
                     if name:
                         model_names.append(name)
                 else:
@@ -212,7 +206,7 @@ def check_project_structure():
         "core/metadata.py",
         "core/manifest.py",
         "utils/hash.py",
-        "cache/cache_manager.py",
+        "utils/cache_manager.py",
     ]
 
     all_exist = True

@@ -25,7 +25,13 @@ class Summarizer:
         self.max_summary_length = max_summary_length
 
     def summarize_paper(
-        self, title: str, abstract: Optional[str], intro: Optional[str], topic: str, metadata: Dict
+        self,
+        title: str,
+        abstract: Optional[str],
+        intro: Optional[str],
+        topic: str,
+        metadata: Dict,
+        full_text: Optional[str] = None,
     ) -> str:
         """
         Generate topic-focused summary of paper.
@@ -36,6 +42,7 @@ class Summarizer:
             intro: Paper introduction
             topic: Research topic
             metadata: Paper metadata (authors, year, venue)
+            full_text: Full paper text (if available)
 
         Returns:
             Markdown-formatted summary
@@ -44,7 +51,7 @@ class Summarizer:
             import ollama
 
             # Build prompt
-            prompt = self._build_summary_prompt(title, abstract, intro, topic, metadata)
+            prompt = self._build_summary_prompt(title, abstract, intro, topic, metadata, full_text)
 
             # Call LLM
             response = ollama.generate(
@@ -61,18 +68,24 @@ class Summarizer:
             return self._fallback_summary(title, abstract, metadata)
 
     def _build_summary_prompt(
-        self, title: str, abstract: Optional[str], intro: Optional[str], topic: str, metadata: Dict
+        self,
+        title: str,
+        abstract: Optional[str],
+        intro: Optional[str],
+        topic: str,
+        metadata: Dict,
+        full_text: Optional[str] = None,
     ) -> str:
-        """Build summarization prompt."""
-        content = []
-
-        if abstract:
-            content.append(f"Abstract: {abstract}")
-
-        if intro:
-            content.append(f"Introduction: {intro[:2000]}")
-
-        content_str = "\n\n".join(content) if content else "Content not available"
+        """Build summarization prompt using full paper text if available."""
+        if full_text:
+            content_str = f"Full Paper Text (may be truncated):\n{full_text[:20000]}"
+        else:
+            content = []
+            if abstract:
+                content.append(f"Abstract: {abstract}")
+            if intro:
+                content.append(f"Introduction: {intro[:2000]}")
+            content_str = "\n\n".join(content) if content else "Content not available"
 
         return f"""Summarize this research paper with a focus on its relevance to the following research topic.
 

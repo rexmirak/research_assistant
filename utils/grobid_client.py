@@ -9,11 +9,10 @@ Enhancements:
 
 import logging
 import time
-from dataclasses import dataclass
-from typing import Callable
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -31,7 +30,12 @@ class _RetryConfig:
 class GrobidClient:
     """Client for GROBID service."""
 
-    def __init__(self, base_url: str = "http://localhost:8070", timeout: int = 60, retry: _RetryConfig | None = None):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8070",
+        timeout: int = 60,
+        retry: _RetryConfig | None = None,
+    ):
         """
         Initialize GROBID client.
 

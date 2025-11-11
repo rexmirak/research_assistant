@@ -137,18 +137,18 @@ test-coverage:
 lint:
 	@echo "Running linters..."
 	@echo "Black..."
-	black --check core/ utils/ cache/ tests/ *.py
+	black --check core/ utils/ tests/ *.py
 	@echo "isort..."
-	isort --check-only core/ utils/ cache/ tests/ *.py
+	isort --check-only core/ utils/ tests/ *.py
 	@echo "Flake8..."
-	flake8 core/ utils/ cache/ tests/ *.py
+	flake8 core/ utils/ tests/ *.py
 	@echo "MyPy..."
-	mypy core/ utils/ cache/
+	mypy core/ utils/
 
 format:
 	@echo "Formatting code..."
-	black core/ utils/ cache/ tests/ *.py
-	isort core/ utils/ cache/ tests/ *.py
+	black core/ utils/ tests/ *.py
+	isort core/ utils/ tests/ *.py
 
 lint-fix: format
 	@echo "Code formatted"

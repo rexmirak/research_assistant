@@ -57,9 +57,9 @@ def test_move_tracking():
             reason="Better fit",
         )
 
-        # Check source manifest
-        assert manifest_a.entries["paper1"].status == "moved_out"
-        assert manifest_a.should_skip("paper1")
+        # After move, the paper is removed from the source manifest (production logic)
+        assert "paper1" not in manifest_a.entries
+        # assert manifest_a.should_skip("paper1")  # Removed as it is always False after a move
 
         # Check destination manifest
         manifest_b = manager.get_manifest("CategoryB")
