@@ -10,7 +10,6 @@ ocrmypdf>=15.0.0
 pdfplumber>=0.11.0
 
 # Document parsing and metadata
-grobid-client-python>=0.1.0
 requests>=2.31.0
 habanero>=1.2.3  # Crossref API client
 
@@ -20,6 +19,7 @@ xxhash>=3.4.0  # Fast hashing
 
 # Embeddings and LLM
 ollama>=0.1.0  # Ollama Python client
+google-generativeai>=0.3.0  # Gemini API client
 numpy>=1.24.0
 scikit-learn>=1.3.0  # For cosine similarity
 

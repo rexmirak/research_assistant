@@ -5,13 +5,14 @@
 A **production-ready, fully-functional research paper analysis pipeline** that processes hundreds of PDFs with:
 
 1. **Accurate PDF parsing** (PyMuPDF + OCR + fallbacks)
-2. **Structured metadata extraction** (GROBID + Crossref + BibTeX)
-3. **Smart deduplication** (exact + near-duplicate detection)
-4. **AI-powered relevance scoring** (Ollama embeddings, 0-10 scale)
+2. **LLM-based metadata extraction** (Local Ollama or Cloud Gemini API)
+3. **Smart deduplication** (MinHash near-duplicate detection)
+4. **AI-powered relevance scoring** (LLM-based, 0-10 scale)
 5. **Category validation & recategorization** (LLM-based)
 6. **Topic-focused summaries** (per paper + aggregated by category)
 7. **Move tracking system** ⭐ (prevents duplicate analysis)
 8. **Multiple output formats** (JSONL + CSV + Markdown)
+9. **Comprehensive testing** (100+ unit and integration tests)
 
 ## 🔑 Critical Features
 
@@ -56,23 +57,22 @@ research_assistant/
 ├── core/                     ← Core processing modules
 │   ├── inventory.py          - PDF discovery & scanning
 │   ├── parser.py             - Text extraction (OCR)
-│   ├── metadata.py           - GROBID + Crossref + BibTeX
-│   ├── dedup.py              - Duplicate detection
+│   ├── metadata.py           - LLM-based metadata extraction
+│   ├── dedup.py              - MinHash duplicate detection
 │   ├── embeddings.py         - Ollama embeddings
-│   ├── scoring.py            - Relevance scoring
-│   ├── classifier.py         - Category validation
+│   ├── scoring.py            - LLM-based relevance scoring
+│   ├── classifier.py         - LLM-based category validation
 │   ├── summarizer.py         - LLM summaries
 │   ├── mover.py              - File moving with tracking
 │   ├── outputs.py            - JSONL/CSV/Markdown generation
 │   └── manifest.py           - Move tracking system ⭐⭐⭐
 │
-├── cache/
-│   └── cache_manager.py      - SQLite caching for resume
-│
 ├── utils/
+│   ├── cache_manager.py      - SQLite caching for resume
+│   ├── llm_provider.py       - Unified Ollama/Gemini interface
+│   ├── gemini_client.py      - Google Gemini API client
 │   ├── hash.py               - Content hashing
-│   ├── text.py               - Text processing
-│   └── grobid_client.py      - GROBID API client
+│   └── text.py               - Text processing
 │
 └── tests/                    ← Test suite
     ├── conftest.py
@@ -94,9 +94,13 @@ cd /Users/karim/Desktop/projects/research_assistant
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Option 1: Local Ollama (recommended)
 ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
-docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0
+
+# Option 2: Gemini API (cloud)
+echo "GEMINI_API_KEY=your_key_here" > .env
 ```
 
 ### 2. Verify Installation
@@ -124,10 +128,17 @@ your_papers/
 # Activate environment
 source venv/bin/activate
 
-# Run with your topic
+# Run with Ollama (local)
 python cli.py process \
   --root-dir /path/to/your_papers \
-  --topic "Your detailed research topic description here"
+  --topic "Your detailed research topic description here" \
+  --llm-provider ollama
+
+# Run with Gemini (cloud - requires GEMINI_API_KEY in .env)
+python cli.py process \
+  --root-dir /path/to/your_papers \
+  --topic "Your research topic" \
+  --llm-provider gemini
 
 # Or with Makefile:
 make run \
@@ -268,18 +279,6 @@ pytest tests/test_manifest.py -v
 
 ## 🔧 Troubleshooting
 
-### GROBID Not Running
-```bash
-# Check
-curl http://localhost:8070/api/isalive
-
-# Start
-make grobid-start
-
-# Restart
-make grobid-restart
-```
-
 ### Ollama Issues
 ```bash
 # Check models
@@ -319,11 +318,11 @@ The manifest system ensures papers moved during analysis are:
 - Root directory: runtime CLI argument
 - Everything else: configurable via CLI or YAML
 
-### 3. Offline-First
-- Local LLMs (Ollama)
-- Local GROBID (Docker)
+### 3. Privacy & Flexibility
+- Local LLMs (Ollama) or Cloud LLMs (Gemini)
 - Optional internet for Crossref enrichment
-- All data stays on your machine
+- Control your data: local processing available
+- Choose based on your privacy/performance needs
 
 ### 4. Resumable & Cached
 - SQLite cache for expensive operations

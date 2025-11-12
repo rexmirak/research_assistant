@@ -6,12 +6,12 @@ A fully automated, offline-first pipeline for processing hundreds of research pa
 ## Key Features Implemented
 
 ### ✅ Core Functionality
-- **Directory Traversal**: Scans nested PDF directories with category detection
+- **Directory Traversal**: Scans nested PDF directories with category detection (includes empty directories)
 - **Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf) + pdfminer.six
-- **Metadata Extraction**: GROBID integration + optional Crossref enrichment
+- **Metadata Extraction**: LLM-based extraction (Ollama/Gemini) + optional Crossref enrichment
 - **BibTeX Generation**: Automatic citation generation with stable keys
 - **Deduplication**: Exact (hash-based) + near-duplicate (MinHash LSH)
-- **Relevance Scoring**: Ollama embeddings + cosine similarity → 0-10 scale
+- **Relevance Scoring**: LLM-based scoring with category assignment and inclusion decision
 - **Category Validation**: LLM-based recategorization with confidence tracking
 - **Summarization**: Topic-focused summaries with "how this helps" sections
 - **Multiple Outputs**: JSONL, CSV, Markdown summaries per category
@@ -60,25 +60,130 @@ A fully automated, offline-first pipeline for processing hundreds of research pa
 
 ## Architecture
 
+### Pipeline Flow Diagram
+
+```mermaid
+flowchart TB
+    subgraph Input
+        A[📁 PDF Directory<br/>with categories]
+    end
+    
+    subgraph "Stage 1: Discovery"
+        B[📋 Inventory Manager]
+        B1[Scan directories]
+        B2[Discover categories<br/>including empty]
+        B3[Build document catalog]
+    end
+    
+    subgraph "Stage 2: Text Extraction"
+        C[📄 Parser]
+        C1[PyMuPDF extraction]
+        C2{Text<br/>quality?}
+        C3[OCR fallback<br/>Tesseract]
+    end
+    
+    subgraph "Stage 3: Metadata Extraction"
+        D[🤖 LLM Provider]
+        D1{Provider?}
+        D2[Ollama<br/>deepseek-r1:8b]
+        D3[Gemini<br/>gemini-2.0-flash]
+        D4[Extract: title, authors,<br/>year, venue, abstract]
+        D5[Optional: Crossref<br/>enrichment]
+        D6[Generate BibTeX]
+    end
+    
+    subgraph "Stage 4: Deduplication"
+        E[🔍 Dedup Manager]
+        E1[Exact duplicates<br/>file hash]
+        E2[Near duplicates<br/>MinHash LSH]
+        E3{Duplicate?}
+        E4[📦 Move to<br/>repeated/]
+    end
+    
+    subgraph "Stage 5: Scoring & Categorization"
+        F[🎯 LLM Scoring]
+        F1[Pass all categories<br/>including empty]
+        F2[LLM scores relevance<br/>0-10 scale]
+        F3[LLM assigns category]
+        F4[LLM decides include]
+        F5{Include?}
+        F6[🚫 Move to<br/>quarantined/]
+    end
+    
+    subgraph "Stage 6: Summarization"
+        G[📝 LLM Summarizer]
+        G1[Topic-focused<br/>summaries]
+        G2[How it helps<br/>your research]
+    end
+    
+    subgraph "Stage 7: Output"
+        H[💾 Output Manager]
+        H1[📊 index.csv]
+        H2[📋 index.jsonl]
+        H3[📝 summaries/<br/>*.md]
+        H4[📜 manifests/<br/>*.json]
+    end
+    
+    subgraph "Cross-Cutting Concerns"
+        I[💿 Cache Manager<br/>SQLite]
+        J[📜 Manifest System<br/>Move tracking]
+    end
+    
+    A --> B
+    B --> B1 --> B2 --> B3 --> C
+    C --> C1 --> C2
+    C2 -->|Low quality| C3 --> D
+    C2 -->|Good| D
+    D --> D1
+    D1 -->|Ollama| D2 --> D4
+    D1 -->|Gemini| D3 --> D4
+    D4 --> D5 --> D6 --> E
+    E --> E1 --> E3
+    E --> E2 --> E3
+    E3 -->|Yes| E4
+    E3 -->|No| F
+    F --> F1 --> F2 --> F3 --> F4 --> F5
+    F5 -->|No| F6
+    F5 -->|Yes| G
+    G --> G1 --> G2 --> H
+    H --> H1 & H2 & H3 & H4
+    
+    I -.->|Cache results| C & D & E & F & G
+    J -.->|Track moves| E4 & F6
+    
+    style D fill:#e1f5ff
+    style F fill:#e1f5ff
+    style G fill:#e1f5ff
+    style E4 fill:#ffe1e1
+    style F6 fill:#ffe1e1
+    style H1 fill:#e1ffe1
+    style H2 fill:#e1ffe1
+    style H3 fill:#e1ffe1
+    style H4 fill:#e1ffe1
+    style I fill:#fff4e1
+    style J fill:#fff4e1
+```
+
+### Component Architecture
+
 ```
 CLI (cli.py)
     ↓
 Config (config.py + YAML)
     ↓
 Pipeline Stages:
-    1. Inventory    → Scan PDFs, build catalog
+    1. Inventory    → Scan PDFs, discover categories (including empty)
     2. Parse        → Extract text (OCR if needed)
-    3. Metadata     → GROBID + Crossref → BibTeX
-    4. Dedup        → Exact + near-dup detection
-    5. Embeddings   → Ollama embed (title+abstract)
-    6. Scoring      → Cosine sim → 0-10 + include boolean
-    7. Classify     → Validate/recategorize with LLM
-    8. Quarantine   → Move low-relevance papers
-    9. Summarize    → Topic-focused summaries
-    10. Output      → JSONL, CSV, Markdown
+    3. Metadata     → LLM extraction (Ollama/Gemini) + optional Crossref → BibTeX
+    4. Dedup        → Exact (hash) + near-duplicate (MinHash LSH)
+    5. Scoring      → LLM-based relevance (0-10) + category + include decision
+    6. Quarantine   → Move low-relevance papers
+    7. Summarize    → Topic-focused summaries per paper
+    8. Output       → JSONL, CSV, Markdown by category
     ↓
-Manifest System (prevents re-analysis)
+Manifest System (prevents re-analysis after moves)
 Cache Manager (SQLite, resumable)
+LLM Provider (Ollama local OR Gemini cloud)
 ```
 
 ## Technology Stack
@@ -95,16 +200,17 @@ Cache Manager (SQLite, resumable)
 - **ocrmypdf + Tesseract**: OCR for scanned PDFs
 
 ### Metadata & Citations
-- **GROBID**: Structured metadata extraction (Docker)
-- **habanero**: Crossref API client
+- **LLM-based extraction**: Ollama or Gemini API for structured metadata
+- **habanero**: Optional Crossref API enrichment
 - **Custom BibTeX generator**
 
 ### AI/ML
-- **Ollama**: Local LLM inference
-  - `deepseek-r1:8b`: Summarization & classification
-  - `nomic-embed-text`: Embeddings
+- **Ollama**: Local LLM inference (privacy-focused)
+  - `deepseek-r1:8b`: Metadata, scoring, classification & summarization
+  - `nomic-embed-text`: Text embeddings
+- **Google Gemini API**: Cloud LLM option
+  - `gemini-2.0-flash-exp`: Metadata, scoring, classification & summarization
 - **NumPy**: Vector operations
-- **scikit-learn**: Cosine similarity
 
 ### Deduplication
 - **datasketch**: MinHash LSH for near-duplicates
@@ -146,9 +252,11 @@ research_assistant/
 ├── cache/
 │   └── cache_manager.py      # SQLite caching
 ├── utils/
+│   ├── cache_manager.py      # SQLite caching
+│   ├── llm_provider.py       # Unified Ollama/Gemini interface ⭐
+│   ├── gemini_client.py      # Google Gemini API client
 │   ├── hash.py               # Content hashing
-│   ├── text.py               # Text processing
-│   └── grobid_client.py      # GROBID API client
+│   └── text.py               # Text processing
 └── tests/                    # Test suite
     ├── test_scoring.py
     ├── test_dedup.py
@@ -206,13 +314,14 @@ make run ROOT_DIR=/path/to/papers TOPIC="Your topic"
 - Inventory: ~1-2 sec per 100 PDFs
 - PDF parsing: ~2-5 sec per PDF (no OCR)
 - OCR: ~30-60 sec per scanned PDF
-- GROBID: ~3-5 sec per PDF
-- Embeddings: ~0.5-1 sec per paper
-- Scoring: ~0.1 sec per paper
-- Classification: ~2-3 sec per paper
-- Summarization: ~5-10 sec per paper
+- LLM metadata extraction: ~2-5 sec per PDF (Ollama) / ~1-2 sec (Gemini)
+- LLM scoring & categorization: ~2-4 sec per paper (Ollama) / ~1-2 sec (Gemini)
+- Deduplication: ~0.5-1 sec per paper
+- Summarization: ~5-10 sec per paper (Ollama) / ~2-5 sec (Gemini)
 
-**100 papers**: ~30-60 minutes end-to-end
+**100 papers**: 
+- Ollama (local): ~40-80 minutes end-to-end
+- Gemini (cloud): ~20-40 minutes end-to-end
 
 ## Testing
 
@@ -271,20 +380,20 @@ Fully configurable via CLI or YAML:
 
 ## Dependencies
 
-**Services** (must be running):
-- Docker (for GROBID)
-- Ollama (for LLMs)
-- Tesseract (for OCR)
+**Services** (choose based on LLM provider):
+- **Ollama** (for local LLM inference) OR **Gemini API key** (for cloud)
+- **Tesseract** (for OCR of scanned PDFs)
 
-**Python packages**: See requirements.txt (18 dependencies)
+**Python packages**: See requirements.txt (20+ dependencies including google-generativeai)
 
 ## Limitations
 
 - Scanned PDFs require OCR (slower)
-- GROBID may fail on unusual layouts
-- Embeddings quality depends on Ollama model
-- Near-duplicate detection threshold needs tuning
-- BibTeX may be incomplete for unpublished papers
+- LLM metadata extraction may miss fields on unusual layouts
+- LLM scoring accuracy depends on model quality and topic description specificity
+- Near-duplicate detection threshold may need tuning per dataset
+- BibTeX may be incomplete for unpublished papers or preprints
+- Gemini API has rate limits and costs (cloud provider dependent)
 
 ## Maintenance
 
@@ -295,11 +404,12 @@ make clean
 # Update dependencies
 pip install -r requirements.txt --upgrade
 
-# Update Ollama models
+# Update Ollama models (if using Ollama)
 ollama pull deepseek-r1:8b
+ollama pull nomic-embed-text
 
-# Restart services
-make grobid-restart
+# Verify installation
+python check_install.py
 ```
 
 ## License

@@ -1,6 +1,6 @@
 # Makefile for Research Assistant
 
-.PHONY: help setup install test clean run grobid-start grobid-stop check-services example models grobid-restart lint format lint-fix test-all clean-all dry-run
+.PHONY: help setup install test clean run check-services example models lint format lint-fix test-all clean-all dry-run
 
 help:
 	@echo "Research Assistant - Available Commands"
@@ -10,10 +10,7 @@ help:
 	@echo "  make install        - Install Python dependencies"
 	@echo ""
 	@echo "Services:"
-	@echo "  make check-services - Check if GROBID and Ollama are running"
-	@echo "  make grobid-start   - Start GROBID Docker container"
-	@echo "  make grobid-stop    - Stop GROBID Docker container"
-	@echo "  make grobid-restart - Restart GROBID"
+	@echo "  make check-services - Check if Ollama is running"
 	@echo "  make models         - Pull required Ollama models (deepseek-r1:8b, nomic-embed-text)"
 	@echo ""
 	@echo "Running:"
@@ -37,39 +34,12 @@ setup:
 
 install:
 	@echo "Installing dependencies..."
-	pip install -r requirements.txt
-
-grobid-start:
-	@echo "Starting GROBID service..."
-	@if ! command -v docker >/dev/null 2>&1; then \
-		echo "Docker not installed. Install Docker Desktop."; \
-		exit 1; \
-	fi
-	@if docker ps -a --format '{{.Names}}' | grep -q '^grobid$$'; then \
-		if docker ps --format '{{.Names}}' | grep -q '^grobid$$'; then \
-			echo "GROBID is already running"; \
-		else \
-			echo "Starting existing GROBID container..."; \
-			docker start grobid >/dev/null; \
-			echo "GROBID started on port 8070"; \
-		fi; \
-	else \
-		echo "Starting new GROBID Docker container..."; \
-		docker run -d -p 8070:8070 --name grobid lfoppiano/grobid:0.8.0 >/dev/null; \
-		echo "GROBID started on port 8070"; \
-	fi
-
-grobid-stop:
-	@echo "Stopping GROBID service..."
-	@docker stop grobid || true
-	@docker rm grobid || true
-	@echo "GROBID stopped"
-
-grobid-restart: grobid-stop grobid-start
+	./venv/bin/pip install -r requirements.txt
+	./venv/bin/pip install -e .
 
 test:
 	@echo "Running tests..."
-	pytest tests/ -v
+	./venv/bin/pytest tests/ -v -x -m "not integration" --tb=short
 
 clean:
 	@echo "Cleaning cache and temporary files..."
@@ -109,9 +79,6 @@ dry-run:
 
 check-services:
 	@echo "Checking required services..."
-	@echo ""
-	@echo "GROBID:"
-	@curl -s http://localhost:8070/api/isalive > /dev/null && echo "  ✓ Running on port 8070" || echo "  ✗ Not running (use: make grobid-start)"
 	@echo ""
 	@echo "Ollama:"
 	@ollama list > /dev/null 2>&1 && echo "  ✓ Running" || echo "  ✗ Not running (install from https://ollama.ai)"

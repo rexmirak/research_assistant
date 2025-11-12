@@ -11,15 +11,40 @@ logger = logging.getLogger(__name__)
 
 
 class DedupManager:
-    """Manage exact and near-duplicate detection."""
+    """Manage exact and near-duplicate detection.
+
+    Uses MinHash LSH for efficient near-duplicate detection with configurable
+    similarity thresholds and accuracy (num_perm).
+
+    Threshold Constraints:
+        - num_perm=64:  max threshold ~0.95
+        - num_perm=128: max threshold ~0.98
+        - num_perm=256: max threshold ~0.98
+        - threshold=0.99 fails for all num_perm (bands < 2 constraint)
+
+    Recommended Configurations:
+        - Strict (high precision): threshold=0.95, num_perm=128 (default)
+        - Balanced: threshold=0.85, num_perm=128
+        - Lenient (high recall): threshold=0.7, num_perm=128
+    """
 
     def __init__(self, similarity_threshold: float = 0.95, num_perm: int = 128):
         """
         Initialize dedup manager.
 
         Args:
-            similarity_threshold: Jaccard similarity threshold for near-duplicates
-            num_perm: Number of permutations for MinHash
+            similarity_threshold: Jaccard similarity threshold for near-duplicates (0.0-0.98)
+            num_perm: Number of permutations for MinHash (64, 128, or 256 recommended)
+
+        Raises:
+            ValueError: If threshold/num_perm combination creates too few bands (b < 2)
+
+        Examples:
+            >>> # Strict duplicate detection (95% similarity)
+            >>> dedup = DedupManager(similarity_threshold=0.95, num_perm=128)
+            >>>
+            >>> # Lenient duplicate detection (80% similarity)
+            >>> dedup = DedupManager(similarity_threshold=0.8, num_perm=128)
         """
         self.similarity_threshold = similarity_threshold
         self.num_perm = num_perm

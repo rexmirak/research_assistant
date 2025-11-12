@@ -22,11 +22,12 @@ from core.parser import PDFParser
 from core.summarizer import Summarizer
 from utils.cache_manager import CacheManager
 
-# Setup logging
+# Setup logging - initially to stderr only (will add file handler later)
+# This prevents logger output from interfering with tqdm progress bar
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[],  # Start with no handlers - we'll add file handler only
 )
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,12 @@ def cli():
     type=click.Path(exists=True, path_type=Path),
     help="Configuration YAML file (optional)",
 )
+@click.option(
+    "--llm-provider",
+    type=click.Choice(["ollama", "gemini"]),
+    default=None,
+    help="LLM provider to use (ollama or gemini)",
+)
 @click.option("--dry-run", is_flag=True, help="Run without moving files")
 @click.option("--resume", is_flag=True, help="Resume from cache")
 @click.option(
@@ -77,6 +84,7 @@ def process(
     cache_dir,
     purge_cache,
     config_file,
+    llm_provider,
     dry_run,
     resume,
     relevance_threshold,
@@ -99,6 +107,12 @@ def process(
     config.resume = resume
     config.scoring.relevance_threshold = relevance_threshold
     config.processing.workers = workers
+    if llm_provider:
+        config.llm_provider = llm_provider
+        # Also set as environment variable so it's picked up by Config() instances
+        import os
+
+        os.environ["LLM_PROVIDER"] = llm_provider
 
     # Setup directories
     config.setup_directories()
@@ -116,7 +130,7 @@ def process(
             logger.error(f"Failed to purge cache: {e}")
             sys.exit(1)
 
-    # Setup file logging
+    # Setup file logging - ONLY to file, not to terminal
     log_file = (
         config.output_dir / "logs" / f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     )
@@ -124,19 +138,35 @@ def process(
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
+    # Set handler only on root logger, no StreamHandler to terminal
+    logging.getLogger().handlers = []  # Clear any existing handlers
     logging.getLogger().addHandler(file_handler)
 
-    logger.info("=" * 80)
-    logger.info("Research Assistant LLM-Driven Pipeline Starting")
+    # Print minimal info to terminal
+    print(f"Pipeline started. Logging to: {log_file}")
+    print("=" * 80)
+
+    logger.info("=" * 100)
+    logger.info("=" * 100)
+    logger.info("PIPELINE START - Research Assistant LLM-Driven Pipeline")
+    logger.info("=" * 100)
     logger.info(f"Root Directory: {root_dir}")
     logger.info(f"Topic: {topic}")
     logger.info(f"Output Directory: {output_dir}")
+    logger.info(f"Cache Directory: {cache_dir}")
+    logger.info(f"LLM Provider: {config.llm_provider}")
+    logger.info(f"Workers: {workers}")
+    logger.info(f"Relevance Threshold: {relevance_threshold}")
     logger.info(f"Dry Run: {dry_run}")
-    logger.info("=" * 80)
+    logger.info(f"Resume: {resume}")
+    logger.info("=" * 100)
 
     try:
         # Initialize components
-        logger.info("[INIT] Initializing pipeline components...")
+        logger.info("")
+        logger.info("=" * 100)
+        logger.info("[INITIALIZATION] Initializing pipeline components...")
+        logger.info("=" * 100)
         cache_manager = CacheManager(config.cache_dir, config.cache.ttl_days)
         manifest_manager = ManifestManager(config.output_dir / "manifests")
         inventory_manager = InventoryManager(config.root_dir)
@@ -150,20 +180,24 @@ def process(
             config.root_dir, manifest_manager, config.dry_run, config.move.create_symlinks
         )
         output_generator = OutputGenerator(config.output_dir)
+        logger.info("All components initialized successfully")
 
         # Stage 1: Inventory
-        logger.info("\n" + "=" * 80)
-        logger.info("[STAGE 1] Inventory: Scanning for PDFs and categories...")
-        logger.info("=" * 80)
+        logger.info("")
+        logger.info("=" * 100)
+        logger.info("[STAGE 1] INVENTORY - Scanning for PDFs and categories")
+        logger.info("=" * 100)
         documents = inventory_manager.scan()
         summary = inventory_manager.summary()
-        logger.info(f"Total PDFs: {summary['total_documents']}")
-        logger.info(f"Categories: {summary['total_categories']}")
+        logger.info(f"Total PDFs found: {summary['total_documents']}")
+        logger.info(f"Total categories: {summary['total_categories']}")
+        logger.info(f"Categories list: {', '.join(inventory_manager.get_categories())}")
 
         # Stage 2: Parse and extract metadata
-        logger.info("\n" + "=" * 80)
-        logger.info("[STAGE 2] LLM Metadata Extraction...")
-        logger.info("=" * 80)
+        logger.info("")
+        logger.info("=" * 100)
+        logger.info("[STAGE 2] METADATA EXTRACTION - LLM-based extraction and categorization")
+        logger.info("=" * 100)
 
         paper_data = {}
         diversion_counters = {
@@ -171,10 +205,9 @@ def process(
             "missing_core_metadata": 0,
         }
 
-        # --- Ensure manifests, index, and CSV exist at process start ---
+        # --- Ensure manifests exist at process start ---
         manifest_manager.save_all()
-        output_generator.write_jsonl([], filename="index.jsonl")
-        output_generator.write_csv([], filename="index.csv")
+        # Note: Index files will be built incrementally and written at the end
     except Exception as e:
         logger.error(f"Pipeline initialization failed: {e}")
         sys.exit(1)
@@ -183,15 +216,19 @@ def process(
     processed_count = 0
     total_papers = len(documents)
 
-    def log_to_file(msg):
-        logger.info(msg)
-
     def process_single_doc(doc):
         paper_id = doc.file_hash[:12]
+
+        logger.info("-" * 100)
+        logger.info(f"Processing: {doc.file_name}")
+        logger.info(f"Paper ID: {paper_id}")
+        logger.info(f"Current category: {doc.category}")
 
         # Check manifest to avoid reprocessing moved papers
         manifest = manifest_manager.get_manifest(doc.category)
         if manifest.should_skip(paper_id):
+            logger.info(f"SKIPPED - Already processed (found in manifest)")
+            logger.info("-" * 100)
             return None
 
         # Check cache
@@ -201,9 +238,9 @@ def process(
         if cached_text and cached_metadata:
             text, text_hash = cached_text
             metadata = cached_metadata
-            logger.info(f"[CACHE] Used cached text and metadata for {doc.file_name}")
+            logger.info(f"[CACHE HIT] Using cached text and metadata")
         else:
-            logger.info(f"[LLM][EXTRACT] Extracting metadata for {doc.file_name} using LLM...")
+            logger.info(f"[EXTRACTION] Extracting text and metadata via LLM...")
             text, text_hash = pdf_parser.extract_text(doc.file_path, config.cache_dir)
             sections = pdf_parser.extract_sections(text)
             metadata = metadata_extractor._extract_with_llm(doc.file_path)
@@ -211,15 +248,15 @@ def process(
                 metadata["abstract"] = sections.get("abstract")
             cache_manager.set_text(paper_id, text, text_hash)
             cache_manager.set_metadata(paper_id, metadata)
+            logger.info(f"[EXTRACTION COMPLETE] Title: {metadata.get('title', 'N/A')}")
 
         # Diversion logic: only divert if both title and authors are missing (unreadable metadata)
         title_missing = not bool(metadata.get("title"))
         authors_missing = len(metadata.get("authors", [])) == 0
         missing_core = title_missing and authors_missing
         if missing_core:
-            logger.info(
-                f"[STAGE 3.1][{doc.file_name}] Diversion: missing core metadata, diverting to need_human_element."
-            )
+            logger.info(f"[DIVERSION] Missing core metadata (title AND authors)")
+            logger.info(f"[DIVERSION] Moving to 'need_human_element' for manual review")
             manifest = manifest_manager.get_manifest(doc.category)
             manifest.add_paper(
                 paper_id=paper_id,
@@ -235,25 +272,27 @@ def process(
                 to_category="need_human_element",
                 reason="Manual review required: missing_core_metadata",
             )
-            logger.info(
-                f"[DIVERT] {doc.file_name} diverted to need_human_element (unreadable metadata)"
-            )
-            # Update outputs after diversion
+            logger.info(f"[DIVERSION COMPLETE] Moved to need_human_element")
+            logger.info("-" * 100)
+            # Update manifests after diversion
             manifest_manager.save_all()
-            output_generator.write_jsonl([], filename="index.jsonl")
-            output_generator.write_csv([], filename="index.csv")
             return None
 
         # Always run LLM scoring/categorization as a separate step
         # LLM categorization
-        log_to_file(f"[STAGE 3.2][{doc.file_name}] LLM scoring/categorization...")
+        logger.info(f"[CATEGORIZATION] Running LLM scoring and categorization...")
         cat_score = metadata_extractor._llm_categorize_and_score(
             title=metadata.get("title", ""),
             abstract=metadata.get("abstract", ""),
             topic=config.topic,
-            available_categories=summary["categories"] if "categories" in summary else None,
+            available_categories=inventory_manager.get_categories(),
         )
         metadata.update(cat_score)
+        logger.info(f"[CATEGORIZATION] Category: {metadata.get('category', 'N/A')}")
+        logger.info(
+            f"[CATEGORIZATION] Relevance Score: {metadata.get('relevance_score', 'N/A')}/10"
+        )
+        logger.info(f"[CATEGORIZATION] Include: {metadata.get('include', False)}")
 
         # After categorization, update manifest and outputs
         # (status logic copied from main output block)
@@ -314,30 +353,27 @@ def process(
             # Also update CSV
             output_generator.write_csv(list(existing.values()), filename="index.csv")
         except Exception as e:
-            log_to_file(f"[ERROR] Failed to update index after categorization: {e}")
+            logger.error(f"Failed to update index after categorization: {e}")
 
-        # Time estimation
+        # Time estimation (logged to file only, not to terminal)
         nonlocal processed_count
         processed_count += 1
         elapsed = time.time() - start_time
         avg_time = elapsed / processed_count if processed_count else 0
         remaining = total_papers - processed_count
         eta = avg_time * remaining
-        log_to_file(
-            f"[TIME] Processed {processed_count}/{total_papers} papers. Elapsed: {elapsed:.1f}s, ETA: {eta/60:.1f} min"
+        logger.info(
+            f"[PROGRESS] {processed_count}/{total_papers} papers processed | "
+            f"Elapsed: {elapsed:.1f}s ({elapsed/60:.1f} min) | "
+            f"Avg: {avg_time:.1f}s/paper | "
+            f"Remaining: {remaining} papers | "
+            f"ETA: {eta/60:.1f} min ({eta/3600:.1f} hrs)"
         )
-
-        # Sleep after every 10 PDFs
-        if processed_count % 10 == 0:
-            log_to_file(f"[SLEEP] Sleeping for 10 minutes after {processed_count} papers...")
-            time.sleep(600)
 
         # Move paper to the correct category folder if categorization is available
         new_category = metadata.get("category")
         if new_category and new_category != doc.category:
-            logger.info(
-                f"[STAGE 3.3][{doc.file_name}] Moving to category '{new_category}' by LLM categorization."
-            )
+            logger.info(f"[MOVE] Category change detected: {doc.category} -> {new_category}")
             new_path = file_mover.move_to_category(
                 paper_id=paper_id,
                 current_path=doc.file_path,
@@ -345,17 +381,16 @@ def process(
                 to_category=new_category,
                 reason="LLM categorization",
             )
-            logger.info(
-                f"[MOVE] {doc.file_name} moved to category '{new_category}' by LLM categorization."
-            )
+            logger.info(f"[MOVE COMPLETE] File moved to: {new_path}")
             # Update doc object in memory to reflect new location
             if new_path:
                 doc.category = new_category
                 doc.file_path = new_path
             # Update outputs after move
             manifest_manager.save_all()
-            output_generator.write_jsonl([], filename="index.jsonl")
-            output_generator.write_csv([], filename="index.csv")
+            # Note: Don't clear index files here - they will be rebuilt at the end
+
+        logger.info("-" * 100)
 
         # Store paper data
         return (
@@ -372,14 +407,22 @@ def process(
         )
 
     # Parallelize LLM processing for extraction, categorization, and scoring
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    logger.info(f"Starting parallel processing with {workers} workers...")
+    logger.info("")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         results = list(
             tqdm(
                 executor.map(process_single_doc, documents),
                 total=len(documents),
                 desc="Processing PDFs",
+                unit="paper",
                 leave=True,
-                ncols=100,
+                ncols=80,
+                # Estimate 22.5 seconds per paper on average (midpoint of 20-25s)
+                # tqdm will auto-adjust based on actual timing
+                smoothing=0.1,  # More responsive to recent timing changes
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
             )
         )
     # Filter out None results (skipped/diverted)
@@ -408,25 +451,27 @@ def process(
             original_category=doc.category,
         )
     manifest_manager.save_all()
-    # Only log big stage labels to console
-    print("All manifests saved after deduplication and moves.")
+    logger.info("All manifests saved after processing")
+
     total_diverted_unique = (
         sum(1 for _ in (manifest_manager.get_manifest("need_human_element").entries.values()))
         if "need_human_element" in manifest_manager.manifests
         else 0
     )
     if total_diverted_unique:
-        logger.info("Diversion summary (need_human_element):")
+        logger.info("")
+        logger.info("DIVERSION SUMMARY (need_human_element):")
         logger.info(f"  Total diverted (unique papers): {total_diverted_unique}")
         logger.info(
-            "  Reasons (counts; a paper may appear in multiple reason tallies): "
+            "  Reasons: "
             + ", ".join(f"{reason}={count}" for reason, count in diversion_counters.items())
         )
 
     # Stage 3: Deduplication
-    print("\n" + "=" * 80)
-    print("[STAGE 3] Deduplication: Detecting and moving duplicates...")
-    print("=" * 80)
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("[STAGE 3] DEDUPLICATION - Detecting and moving duplicates")
+    logger.info("=" * 100)
 
     # Exact duplicates
     exact_dups = dedup_manager.find_exact_duplicates(documents)
@@ -457,30 +502,31 @@ def process(
                 if new_path:
                     dup_data["doc"].category = "repeated"
                     dup_data["doc"].file_path = new_path
-                # Update outputs after dedup move
+                # Update manifests after dedup move
                 manifest_manager.save_all()
-                output_generator.write_jsonl([], filename="index.jsonl")
-                output_generator.write_csv([], filename="index.csv")
 
     manifest_manager.save_all()
 
-    # Stage 4: Embeddings and Scoring
-    print("\n" + "=" * 80)
-    print("[STAGE 4] LLM Relevance Scoring and Categorization...")
-    print("=" * 80)
+    # Stage 4: Embeddings and Scoring (now handled in parallel processing)
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("[STAGE 4] SCORING - LLM Relevance Scoring and Categorization (completed)")
+    logger.info("=" * 100)
 
     # Stage 5: Quarantine low-relevance papers
-    print("\n" + "=" * 80)
-    print("[STAGE 5] Quarantine Unrelated Papers (LLM include: False)...")
-    print("=" * 80)
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("[STAGE 5] QUARANTINE - Moving papers with include=False")
+    logger.info("=" * 100)
 
     # Quarantine papers not included by LLM
+    quarantine_count = 0
     for paper_id, data in list(paper_data.items()):
         if not data.get("include", False):
             score = data.get("relevance_score")
             score_str = f"{score:.1f}" if isinstance(score, (int, float)) else "N/A"
             logger.info(
-                f"[STAGE 3.5][{data['doc'].file_name}] Quarantine: LLM include: False, score: {score_str}"
+                f"[QUARANTINE] {data['doc'].file_name} | Score: {score_str} | Reason: Include=False"
             )
             new_path = file_mover.move_to_quarantined(
                 paper_id=paper_id,
@@ -488,19 +534,21 @@ def process(
                 from_category=data["doc"].category,
                 reason=f"LLM include: False, score: {score_str}",
             )
+            quarantine_count += 1
             # Update doc object in memory
             if new_path:
                 data["doc"].category = "quarantined"
                 data["doc"].file_path = new_path
-            # Update outputs after quarantine
+            # Update manifests after quarantine
             manifest_manager.save_all()
-            output_generator.write_jsonl([], filename="index.jsonl")
-            output_generator.write_csv([], filename="index.csv")
+
+    logger.info(f"Total papers quarantined: {quarantine_count}")
 
     # Stage 6: Summarization
-    print("\n" + "=" * 80)
-    print("[STAGE 6] Generating Summaries with LLM...")
-    print("=" * 80)
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("[STAGE 6] SUMMARIZATION - Generating LLM summaries for included papers")
+    logger.info("=" * 100)
 
     category_summaries = {}
 
@@ -525,13 +573,20 @@ def process(
         return paper_id, data, summary
 
     # Parallelize summarization with 2 workers
+    included_papers = [
+        (pid, data) for pid, data in paper_data.items() if data.get("include", False)
+    ]
+    logger.info(f"Generating summaries for {len(included_papers)} included papers...")
+
     with ThreadPoolExecutor(max_workers=2) as executor:
-        paper_items = list(paper_data.items())
         results = list(
             tqdm(
-                executor.map(lambda item: summarize_paper_task(item[0], item[1]), paper_items),
-                total=len(paper_items),
+                executor.map(lambda item: summarize_paper_task(item[0], item[1]), included_papers),
+                total=len(included_papers),
                 desc="Generating summaries",
+                unit="paper",
+                ncols=80,
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             )
         )
 
@@ -562,14 +617,17 @@ def process(
         )
 
     # Write category summaries
+    logger.info("")
+    logger.info("Writing category summary markdown files...")
     for category, summaries in category_summaries.items():
         output_generator.write_category_summary(category, summaries)
-        logger.info(f"Wrote summary markdown for category: {category}")
+        logger.info(f"  - {category}.md ({len(summaries)} papers)")
 
     # Stage 7: Generate Outputs
-    print("\n" + "=" * 80)
-    print("[STAGE 7] Writing Outputs...")
-    print("=" * 80)
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("[STAGE 7] OUTPUT GENERATION - Writing final index files")
+    logger.info("=" * 100)
 
     # Build output records
     records = []
@@ -608,13 +666,30 @@ def process(
     # Write outputs
     output_generator.write_jsonl(records)
     output_generator.write_csv(records)
-    logger.info("Wrote index.jsonl and index.csv outputs.")
+    logger.info(f"Wrote {len(records)} records to index.jsonl and index.csv")
     # output_generator.write_statistics(stats, "statistics.json")
 
+    # Final summary
+    logger.info("")
+    logger.info("=" * 100)
+    logger.info("PIPELINE COMPLETE")
+    logger.info("=" * 100)
+    logger.info(f"Total papers processed: {len(paper_data)}")
+    logger.info(
+        f"Papers included: {sum(1 for d in paper_data.values() if d.get('include', False))}"
+    )
+    logger.info(
+        f"Papers quarantined: {sum(1 for d in paper_data.values() if not d.get('include', False))}"
+    )
+    logger.info(f"Output directory: {config.output_dir}")
+    logger.info("=" * 100)
+
+    # Print minimal summary to terminal
     print("\n" + "=" * 80)
-    print("Pipeline Complete!")
-    print(f"Processed: {len(paper_data)} papers")
-    print(f"Outputs written to: {config.output_dir}")
+    print("✓ Pipeline Complete!")
+    print(f"  Processed: {len(paper_data)} papers")
+    print(f"  Outputs: {config.output_dir}")
+    print(f"  Log file: {log_file}")
     print("=" * 80)
 
 

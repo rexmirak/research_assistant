@@ -47,6 +47,7 @@ class InventoryManager:
         self.root_dir = root_dir
         self.ignore_patterns = ignore_patterns or [".*", "__*", "repeated", "quarantined"]
         self.documents: List[PDFDocument] = []
+        self.all_categories: List[str] = []
 
     def scan(self) -> List[PDFDocument]:
         """
@@ -57,6 +58,14 @@ class InventoryManager:
         """
         logger.info(f"Scanning directory: {self.root_dir}")
         self.documents = []
+        self.all_categories = []
+
+        # First, discover all subdirectories as categories
+        for item in self.root_dir.iterdir():
+            if item.is_dir() and not self._should_ignore(item):
+                self.all_categories.append(item.name)
+
+        logger.info(f"Discovered {len(self.all_categories)} category directories")
 
         # Traverse directory structure
         for pdf_path in self.root_dir.rglob("*.pdf"):
@@ -126,8 +135,8 @@ class InventoryManager:
             return "unknown"
 
     def get_categories(self) -> List[str]:
-        """Get list of unique categories."""
-        return sorted(set(doc.category for doc in self.documents))
+        """Get list of unique categories including empty directories."""
+        return sorted(self.all_categories)
 
     def get_documents_by_category(self, category: str) -> List[PDFDocument]:
         """Get all documents in a category."""
@@ -142,7 +151,10 @@ class InventoryManager:
 
     def summary(self) -> Dict:
         """Get inventory summary statistics."""
-        categories = {}
+        # Initialize all discovered categories with zero counts
+        categories = {cat: {"count": 0, "total_size": 0} for cat in self.all_categories}
+
+        # Update counts for categories that have documents
         for doc in self.documents:
             if doc.category not in categories:
                 categories[doc.category] = {"count": 0, "total_size": 0}
@@ -151,6 +163,6 @@ class InventoryManager:
 
         return {
             "total_documents": len(self.documents),
-            "total_categories": len(categories),
+            "total_categories": len(self.all_categories),
             "categories": categories,
         }

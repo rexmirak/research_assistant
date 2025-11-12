@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 
@@ -69,8 +70,17 @@ class ProcessingConfig(BaseModel):
     skip_ocr_if_text_exists: bool = True
 
 
+class GeminiConfig(BaseModel):
+    """Gemini API configuration."""
+
+    api_key: Optional[str] = None
+
+
 class Config(BaseModel):
     """Main configuration."""
+
+    llm_provider: str = Field(default="ollama")  # or "gemini"
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     crossref: CrossrefConfig = Field(default_factory=CrossrefConfig)
@@ -123,6 +133,23 @@ class Config(BaseModel):
             (self.cache_dir / "ocr").mkdir(exist_ok=True)
             (self.cache_dir / "embeddings").mkdir(exist_ok=True)
 
+    def load_env(self):
+        """Load .env and set Gemini API key and LLM provider if present."""
+        load_dotenv()
+        # Load API key
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            self.gemini.api_key = api_key
+        # Load LLM provider from environment (set by CLI)
+        provider = os.getenv("LLM_PROVIDER")
+        if provider:
+            self.llm_provider = provider
+
+    def model_post_init(self, __context):
+        """Automatically load environment after initialization."""
+        self.load_env()
+
 
 # Default config instance
 default_config = Config()
+default_config.load_env()

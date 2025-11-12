@@ -65,7 +65,9 @@ def main():
         topic=topic,
         output_dir=Path("./outputs"),
         cache_dir=Path("./cache"),
+        purge_cache=False,
         config_file=None,
+        llm_provider="ollama",  # or "gemini" if GEMINI_API_KEY is set
         dry_run=False,
         resume=False,
         relevance_threshold=6.5,

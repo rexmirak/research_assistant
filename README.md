@@ -1,19 +1,52 @@
 # Research Assistant
 
-An intelligent, offline-first pipeline for processing hundreds of research papers using local LLMs (Ollama), accurate PDF parsing, metadata extraction, relevance scoring, deduplication, and automated summarization.
+An intelligent pipeline for processing research papers using LLMs (Ollama or Gemini), accurate PDF parsing, metadata extraction, relevance scoring, deduplication, and automated summarization.
 
 ## Features
 
+- **Flexible LLM Support**: Use local Ollama models or Google Gemini API
 - **Generic & Configurable**: Runtime topic and directory configuration (no hardcoding)
 - **Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf + Tesseract) + pdfminer.six
-- **Structured Metadata**: GROBID integration for titles, authors, venues, years, DOIs, and BibTeX
-- **Smart Deduplication**: Exact (hash-based) and near-duplicate (similarity-based) detection
-- **Relevance Scoring**: Ollama embeddings + cosine similarity → 0-10 score + inclusion boolean
+- **LLM-Based Metadata Extraction**: Extract titles, authors, abstracts, years using local or cloud LLMs
+- **Smart Deduplication**: Exact (hash-based) and near-duplicate (MinHash-based) detection
+- **Relevance Scoring**: LLM-based scoring (0-10) with category assignment and inclusion decision
 - **Category Validation**: LLM-based recategorization with confidence tracking
 - **Topic-Focused Summaries**: Per-paper summaries with "how this helps your research"
 - **Move Tracking**: Manifest per category prevents duplicate analysis after recategorization
-- **Resumable**: SQLite cache for embeddings, GROBID results, OCR outputs
+- **Resumable**: SQLite cache for embeddings and OCR outputs
 - **Multiple Outputs**: JSONL master index + CSV spreadsheet + Markdown summaries per category
+- **Comprehensive Testing**: 100+ unit and integration tests with 41%+ coverage
+
+## Pipeline Flow
+
+```mermaid
+graph TD
+    A[📁 Input: PDF Directory] --> B[📋 Stage 1: Inventory]
+    B -->|Discover all PDFs & categories| C[📄 Stage 2: Parse & Extract Text]
+    C -->|PyMuPDF + OCR fallback| D[🤖 Stage 3: LLM Metadata Extraction]
+    D -->|Title, authors, abstract, year| E[🔍 Stage 4: Deduplication]
+    E -->|Exact hash + MinHash LSH| F{Duplicate?}
+    F -->|Yes| G[📦 Move to repeated/]
+    F -->|No| H[🎯 Stage 5: LLM Scoring & Categorization]
+    H -->|Relevance 0-10 + category| I{Include?}
+    I -->|Score < threshold| J[🚫 Move to quarantined/]
+    I -->|Score >= threshold| K[📝 Stage 6: LLM Summarization]
+    K -->|Topic-focused summaries| L[💾 Stage 7: Output Generation]
+    L --> M[📊 index.csv]
+    L --> N[📋 index.jsonl]
+    L --> O[📝 summaries/*.md]
+    L --> P[📜 manifests/*.json]
+    
+    style D fill:#e1f5ff
+    style H fill:#e1f5ff
+    style K fill:#e1f5ff
+    style G fill:#ffe1e1
+    style J fill:#ffe1e1
+    style M fill:#e1ffe1
+    style N fill:#e1ffe1
+    style O fill:#e1ffe1
+    style P fill:#e1ffe1
+```
 
 ## Architecture
 
@@ -24,31 +57,34 @@ research_assistant/
 ├── core/
 │   ├── inventory.py        # Directory traversal and PDF discovery
 │   ├── parser.py           # PDF text extraction (PyMuPDF + OCR)
-│   ├── metadata.py         # GROBID integration + Crossref enrichment
-│   ├── dedup.py            # Exact and near-duplicate detection
+│   ├── metadata.py         # LLM-based metadata extraction
+│   ├── dedup.py            # MinHash near-duplicate detection
 │   ├── embeddings.py       # Ollama embedding generation
-│   ├── scoring.py          # Relevance scoring and ranking
-│   ├── classifier.py       # Category validation and recategorization
+│   ├── scoring.py          # LLM-based relevance scoring
+│   ├── classifier.py       # LLM-based category validation
 │   ├── summarizer.py       # Topic-focused summary generation
 │   ├── mover.py            # File moving with manifest tracking
+│   ├── manifest.py         # Category manifest tracking
 │   └── outputs.py          # JSONL, CSV, and Markdown generation
-├── cache/
-│   └── cache_manager.py    # SQLite-based caching
 ├── utils/
+│   ├── cache_manager.py    # SQLite-based caching
+│   ├── llm_provider.py     # Unified Ollama/Gemini interface
+│   ├── gemini_client.py    # Google Gemini API client
 │   ├── hash.py             # Content hashing utilities
-│   ├── text.py             # Text normalization and processing
-│   └── grobid_client.py    # GROBID Docker client
-└── tests/                  # Unit and integration tests
+│   └── text.py             # Text normalization and processing
+└── tests/                  # 100+ unit and integration tests
 ```
 
 ## Prerequisites
 
 - **Python 3.10+**
-- **Docker** (for GROBID server)
-- **Ollama** with models:
-  - `deepseek-r1:8b` (summarization & classification - superior reasoning for academic content)
-  - `nomic-embed-text` (embeddings)
-- **Tesseract** (for OCR): `brew install tesseract`
+- **LLM Provider** (choose one or both):
+  - **Ollama** (local, free) with models:
+    - `deepseek-r1:8b` (metadata extraction & classification)
+    - `nomic-embed-text` (embeddings)
+  - **Google Gemini API** (cloud, requires API key):
+    - Set `GEMINI_API_KEY` environment variable
+- **Tesseract** (for OCR): `brew install tesseract` (macOS) or `apt-get install tesseract-ocr` (Linux)
 
 ## Installation
 
@@ -63,34 +99,44 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Pull Ollama models
+# Option 1: Local Ollama (recommended for privacy/offline)
 ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 
-# Start GROBID (Docker)
-docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0
+# Option 2: Gemini API (cloud-based)
+# Create .env file with your API key:
+echo "GEMINI_API_KEY=your_api_key_here" > .env
 ```
 
 ## Quick Start
 
 ```bash
-# Run the full pipeline
+# Run with Ollama (local)
 python cli.py process \
   --root-dir /path/to/papers \
   --topic "Your research topic description here" \
+  --llm-provider ollama \
   --output-dir ./outputs \
   --cache-dir ./cache
+
+# Run with Gemini (requires GEMINI_API_KEY in .env)
+python cli.py process \
+  --root-dir /path/to/papers \
+  --topic "Your research topic" \
+  --llm-provider gemini
 
 # Dry-run (no file moves)
 python cli.py process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
+  --llm-provider ollama \
   --dry-run
 
-# Resume a previous run
+# Resume a previous run (uses cached results)
 python cli.py process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
+  --llm-provider ollama \
   --resume
 ```
 
@@ -100,19 +146,21 @@ Runtime configuration via CLI flags or `config.yaml`:
 
 ```yaml
 # config.yaml (optional)
-relevance_threshold: 6.5  # Include papers with score >= 6.5
+llm_provider: ollama  # or 'gemini'
+relevance_threshold: 7.0  # Include papers with score >= 7.0
 dedup_similarity: 0.95    # Near-duplicate threshold
 ollama:
   summarize_model: "deepseek-r1:8b"
   classify_model: "deepseek-r1:8b"
   embed_model: "nomic-embed-text"
-  temperature: 0.2
-grobid:
-  url: "http://localhost:8070"
-  timeout: 60
+  temperature: 0.1
+gemini:
+  api_key: null  # Set via GEMINI_API_KEY environment variable
+  model: "gemini-2.0-flash-exp"
+  temperature: 0.1
 crossref:
   enabled: true
-  email: "your.email@domain.com"  # Polite pool
+  email: "your.email@domain.com"  # Polite pool (optional)
 move:
   enabled: true
   track_manifest: true
@@ -200,15 +248,6 @@ python cli.py export --cache-dir ./cache --output-dir ./outputs
 
 ## Troubleshooting
 
-### GROBID not responding
-```bash
-# Check GROBID is running
-curl http://localhost:8070/api/isalive
-
-# Restart if needed
-docker restart $(docker ps -q --filter ancestor=lfoppiano/grobid:0.8.0)
-```
-
 ### OCR failing
 ```bash
 # Verify Tesseract installation
@@ -237,3 +276,18 @@ brew services restart ollama
 ## License
 
 MIT
+
+# Gemini API support (optional)
+# 1. Get your API key from https://aistudio.google.com/app/apikey
+# 2. Add GEMINI_API_KEY to your .env file (see .env.example)
+
+# Use Gemini as LLM provider
+# python cli.py process \
+#   --root-dir /path/to/papers \
+#   --topic "Your research topic" \
+#   --llm-provider gemini
+
+# LLM provider selection in config.yaml
+# llm_provider: ollama  # or 'gemini'
+# gemini:
+#   api_key: "${GEMINI_API_KEY}"

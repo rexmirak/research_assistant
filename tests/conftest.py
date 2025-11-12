@@ -1,10 +1,16 @@
 """Test utilities and helpers."""
 
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Add project root to Python path so we can import cli, config, etc.
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 
 @pytest.fixture

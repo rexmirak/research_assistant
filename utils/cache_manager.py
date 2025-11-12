@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class CacheManager:
-    """SQLite-based cache for embeddings, GROBID results, and OCR outputs."""
+    """SQLite-based cache for embeddings and OCR outputs."""
 
     def __init__(self, cache_dir: Path, ttl_days: int = 90):
         """
@@ -143,7 +143,7 @@ class CacheManager:
         result = cursor.fetchone()
         conn.close()
 
-        return result if result else None
+        return result if result else None  # type: ignore[no-any-return]
 
     def set_text(self, paper_id: str, text: str, text_hash: str):
         """Cache text extract."""

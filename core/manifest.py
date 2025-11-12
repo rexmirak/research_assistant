@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from filelock import FileLock, Timeout
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,23 +69,30 @@ class CategoryManifest:
         self.load()
 
     def load(self):
-        """Load manifest from disk."""
+        """Load manifest from disk with file lock."""
         if self.manifest_path.exists():
+            lock_path = str(self.manifest_path) + ".lock"
+            lock = FileLock(lock_path, timeout=30)
             try:
-                with open(self.manifest_path, "r") as f:
-                    data = json.load(f)
+                with lock:
+                    with open(self.manifest_path, "r") as f:
+                        data = json.load(f)
 
-                for entry_data in data.get("entries", []):
-                    entry = ManifestEntry(entry_data)
-                    self.entries[entry.paper_id] = entry
-                    self.content_hashes.add(entry.content_hash)
+                    for entry_data in data.get("entries", []):
+                        entry = ManifestEntry(entry_data)
+                        self.entries[entry.paper_id] = entry
+                        self.content_hashes.add(entry.content_hash)
 
-                logger.info(f"Loaded manifest for {self.category}: {len(self.entries)} entries")
+                    logger.info(f"Loaded manifest for {self.category}: {len(self.entries)} entries")
+            except Timeout:
+                logger.error(f"Timeout acquiring lock for manifest load: {self.manifest_path}")
             except Exception as e:
                 logger.error(f"Failed to load manifest for {self.category}: {e}")
 
     def save(self):
-        """Save manifest to disk."""
+        """Save manifest to disk with file lock."""
+        lock_path = str(self.manifest_path) + ".lock"
+        lock = FileLock(lock_path, timeout=30)
         try:
             self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -93,10 +102,13 @@ class CategoryManifest:
                 "entries": [e.to_dict() for e in self.entries.values()],
             }
 
-            with open(self.manifest_path, "w") as f:
-                json.dump(data, f, indent=2)
+            with lock:
+                with open(self.manifest_path, "w") as f:
+                    json.dump(data, f, indent=2)
 
             logger.debug(f"Saved manifest for {self.category}")
+        except Timeout:
+            logger.error(f"Timeout acquiring lock for manifest save: {self.manifest_path}")
         except Exception as e:
             logger.error(f"Failed to save manifest for {self.category}: {e}")
 
@@ -241,7 +253,7 @@ class ManifestManager:
 
     def save_all(self):
         """Save all manifests."""
-        for manifest in self.manifests.values():
+        for manifest in list(self.manifests.values()):
             manifest.save()
 
     def get_all_content_hashes(self) -> Dict[str, tuple[str, str]]:

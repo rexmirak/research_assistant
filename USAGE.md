@@ -11,9 +11,14 @@
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Choose LLM provider:
+# Option 1: Local Ollama
 ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
-docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0
+
+# Option 2: Gemini API
+echo "GEMINI_API_KEY=your_key_here" > .env
 ```
 
 ### 2. Prepare Your Papers
@@ -32,9 +37,17 @@ my_papers/
 
 ### 3. Run Pipeline
 ```bash
+# With Ollama (local)
 python cli.py process \
   --root-dir /path/to/my_papers \
-  --topic "Your research topic description here"
+  --topic "Your research topic description here" \
+  --llm-provider ollama
+
+# With Gemini (cloud)
+python cli.py process \
+  --root-dir /path/to/my_papers \
+  --topic "Your research topic description here" \
+  --llm-provider gemini
 ```
 
 ## Detailed Usage
@@ -50,21 +63,32 @@ python cli.py process [OPTIONS]
 - `--topic TEXT`: Research topic description (be specific!)
 
 **Optional Options:**
+- `--llm-provider CHOICE`: LLM provider (ollama or gemini, default: ollama)
 - `--output-dir PATH`: Output directory (default: ./outputs)
 - `--cache-dir PATH`: Cache directory (default: ./cache)
 - `--config-file PATH`: YAML configuration file
+- `--purge-cache`: Delete cache before processing
 - `--dry-run`: Preview moves without executing
 - `--resume`: Resume from cached data
-- `--relevance-threshold FLOAT`: Score threshold for inclusion (default: 6.5)
+- `--relevance-threshold FLOAT`: Score threshold for inclusion (default: 7.0)
 - `--workers INT`: Number of parallel workers (default: 4)
 
 ### Examples
 
-#### Basic Usage
+#### Basic Usage with Ollama
 ```bash
 python cli.py process \
   --root-dir ~/Documents/research_papers \
-  --topic "Machine learning applications in medical imaging"
+  --topic "Machine learning applications in medical imaging" \
+  --llm-provider ollama
+```
+
+#### Basic Usage with Gemini
+```bash
+python cli.py process \
+  --root-dir ~/Documents/research_papers \
+  --topic "Machine learning applications in medical imaging" \
+  --llm-provider gemini
 ```
 
 #### With Custom Configuration
@@ -77,7 +101,8 @@ cp config.example.yaml config.yaml
 python cli.py process \
   --root-dir ~/Documents/research_papers \
   --topic "Deep learning for drug discovery" \
-  --config-file config.yaml
+  --config-file config.yaml \
+  --llm-provider ollama
 ```
 
 #### Dry Run (Preview)

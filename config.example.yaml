@@ -1,6 +1,9 @@
-"""Example configuration file for research assistant."""
+# Example configuration file for research assistant
 
-# Ollama models
+# LLM provider selection (ollama or gemini)
+llm_provider: ollama
+
+# Ollama configuration (local LLM)
 ollama:
   summarize_model: "deepseek-r1:8b"
   embed_model: "nomic-embed-text"
@@ -8,11 +11,12 @@ ollama:
   temperature: 0.1
   base_url: "http://localhost:11434"
 
-# GROBID service
-grobid:
-  url: "http://localhost:8070"
-  timeout: 60
-  batch_size: 10
+# Gemini configuration (Google Cloud API)
+# Set GEMINI_API_KEY environment variable or update .env file
+gemini:
+  api_key: null  # Loaded from GEMINI_API_KEY env var
+  model: "gemini-2.0-flash-exp"
+  temperature: 0.1
 
 # Crossref API
 crossref:

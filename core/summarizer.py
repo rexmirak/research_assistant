@@ -3,6 +3,8 @@
 import logging
 from typing import Dict, Optional
 
+from utils.llm_provider import llm_generate
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,21 +50,18 @@ class Summarizer:
             Markdown-formatted summary
         """
         try:
-            import ollama
-
             # Build prompt
             prompt = self._build_summary_prompt(title, abstract, intro, topic, metadata, full_text)
 
-            # Call LLM
-            response = ollama.generate(
-                model=self.model, prompt=prompt, options={"temperature": self.temperature}
+            # Call provider-agnostic LLM
+            response = llm_generate(
+                prompt=prompt,
+                model=self.model,
+                options={"temperature": self.temperature},
             )
-
             summary = response["response"].strip()
-
             # Format as markdown
             return self._format_summary(summary, metadata)
-
         except Exception as e:
             logger.error(f"Summarization failed for {title}: {e}")
             return self._fallback_summary(title, abstract, metadata)
@@ -76,18 +75,14 @@ class Summarizer:
         metadata: Dict,
         full_text: Optional[str] = None,
     ) -> str:
-        """Build summarization prompt using full paper text if available."""
-        if full_text:
-            content_str = f"Full Paper Text (may be truncated):\n{full_text[:20000]}"
+        """Build summarization prompt using only abstract to focus on key relations to research topic."""
+        # Use only abstract for focused, efficient summarization
+        if abstract:
+            content_str = f"Abstract: {abstract}"
         else:
-            content = []
-            if abstract:
-                content.append(f"Abstract: {abstract}")
-            if intro:
-                content.append(f"Introduction: {intro[:2000]}")
-            content_str = "\n\n".join(content) if content else "Content not available"
+            content_str = "Abstract not available"
 
-        return f"""Summarize this research paper with a focus on its relevance to the following research topic.
+        return f"""Analyze this research paper's abstract and identify its key relations to the following research topic.
 
 Research Topic:
 {topic}
@@ -96,12 +91,12 @@ Paper Title: {title}
 
 {content_str}
 
-Provide a concise summary (max {self.max_summary_length} words) covering:
-1. Main contributions and key findings
-2. Methods or approach used
-3. Specific points/insights relevant to the research topic
-4. How this work could help or inform research on the topic
-5. Any notable limitations
+Provide a concise analysis (max {self.max_summary_length} words) covering:
+1. Main contributions and key findings from the abstract
+2. Direct relevance to the research topic
+3. Specific connections or insights that relate to the topic
+4. How this work could inform research on the topic
+5. Potential gaps or limitations mentioned
 
 Format as bullet points for easy scanning.
 """

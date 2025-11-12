@@ -36,6 +36,7 @@ def check_dependencies():
         "yaml",
         "fitz",
         "ollama",
+        "google.generativeai",
         "numpy",
         "pandas",
         "datasketch",
@@ -114,29 +115,6 @@ def check_ollama():
     except Exception as e:
         print(f"❌ Ollama not running or model list unavailable: {e}")
         print("Install from: https://ollama.ai")
-        return False
-
-
-def check_grobid():
-    """Check GROBID service."""
-    print_header("GROBID Service")
-
-    try:
-        import requests
-
-        response = requests.get("http://localhost:8070/api/isalive", timeout=5)
-
-        if response.status_code == 200:
-            print("✅ GROBID is running on port 8070")
-            return True
-        else:
-            print(f"⚠️  GROBID returned status {response.status_code}")
-            return False
-
-    except Exception as e:
-        print(f"❌ GROBID not running: {e}")
-        print("Start with: make grobid-start")
-        print("Or: docker run -d -p 8070:8070 lfoppiano/grobid:0.8.0")
         return False
 
 
@@ -237,7 +215,6 @@ def main():
         ("Project Structure", check_project_structure),
         ("Docker", check_docker),
         ("Ollama", check_ollama),
-        ("GROBID", check_grobid),
         ("Tesseract", check_tesseract),
     ]
 

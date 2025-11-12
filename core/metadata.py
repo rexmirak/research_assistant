@@ -1,3 +1,21 @@
+from pydantic import BaseModel
+
+
+class MetadataSchema(BaseModel):
+    title: str | None
+    authors: list[str] | None
+    year: str | None
+    venue: str | None
+    abstract: str | None
+
+
+class CategorizationSchema(BaseModel):
+    category: str
+    relevance_score: float
+    include: bool
+    reason: str
+
+
 """Metadata extraction using LLM and PDF heuristics."""
 
 import json as _json
@@ -7,8 +25,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import fitz  # PyMuPDF (for first page text)
-import ollama
 
+from utils.llm_provider import llm_generate
 from utils.text import clean_title, create_bibtex_key
 
 logger = logging.getLogger(__name__)
@@ -41,9 +59,7 @@ class MetadataExtractor:
         """
         Extract metadata from PDF using LLM only, then categorize and score relevance to topic using LLM.
         """
-        # logger.info(f"[META][LLM] {pdf_path.name}: extracting metadata using LLM...")
         metadata = self._extract_with_llm(pdf_path)
-        # logger.info(f"[META][LLM][RESULT] {pdf_path.name}: {metadata}")
 
         # LLM-based categorization and relevancy scoring
         if topic and metadata.get("title"):
@@ -54,7 +70,6 @@ class MetadataExtractor:
                 available_categories=available_categories or [],
             )
             metadata.update(cat_score)
-            # logger.info(f"[META][LLM][CAT_SCORE] {pdf_path.name}: {cat_score}")
 
         return metadata
 
@@ -91,57 +106,77 @@ class MetadataExtractor:
             '  "reason": "brief explanation"\n'
             "}"
         )
-        # logger.info(f"[LLM][CAT_SCORE][PROMPT] Input prompt for categorization/scoring:\n{prompt}")
-        response = ollama.generate(
-            model="deepseek-r1:8b",
-            prompt=prompt,
-            options={"temperature": 0.1},
-        )
-        text = response["response"].strip()
-        # logger.info(f"[LLM][CAT_SCORE][RAW_RESPONSE] LLM response for categorization/scoring:\n{text}")
-        json_match = re.search(r"{[\s\S]*}", text)
-        if json_match:
-            json_str = json_match.group(0)
-            try:
-                result: Dict[str, Any] = _json.loads(json_str)
-                # Defensive: ensure correct types
-                if not isinstance(result.get("relevance_score"), (int, float)):
-                    logger.warning("LLM result: relevance_score had wrong type, coercing to None.")
-                    result["relevance_score"] = None
-                if not isinstance(result.get("category"), str):
-                    logger.warning("LLM result: category had wrong type, coercing to None.")
-                    result["category"] = None
-                if not isinstance(result.get("reason"), str):
-                    logger.warning("LLM result: reason had wrong type, coercing to empty string.")
-                    result["reason"] = ""
-                if not isinstance(result.get("include"), bool):
-                    # Accept "true"/"false" strings as well
-                    if isinstance(result.get("include"), str):
-                        logger.warning("LLM result: include was string, coercing to bool.")
-                        result["include"] = result["include"].strip().lower() == "true"
-                    else:
-                        logger.warning("LLM result: include had wrong type, coercing to None.")
-                        result["include"] = None
-                return result
-            except Exception as e:
-                logger.warning(
-                    f"LLM JSON parse failed for categorization/scoring: {e}\nResponse: {text}"
-                )
+
+        from config import Config
+
+        cfg = Config()
+        provider = getattr(cfg, "llm_provider", "ollama")
+        options: dict = {"temperature": 0.1}
+        if provider == "gemini":
+            options["schema"] = CategorizationSchema
+            model = None  # Use default Gemini model from config
         else:
-            logger.warning(
-                f"No JSON object found in LLM response for categorization/scoring: {text}"
-            )
-        return {
-            "category": None,
-            "relevance_score": None,
-            "include": None,
-            "reason": "LLM failed to respond correctly.",
-        }
+            model = "deepseek-r1:8b"  # Ollama model
+        response = llm_generate(
+            prompt=prompt,
+            model=model,
+            options=options,
+        )
+        if provider == "gemini":
+            # Gemini returns parsed dict
+            return dict(response["response"])
+        else:
+            text = response["response"].strip()
+            json_match = re.search(r"{[\s\S]*}", text)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    result: Dict[str, Any] = _json.loads(json_str)
+                    # Defensive: ensure correct types
+                    if not isinstance(result.get("relevance_score"), (int, float)):
+                        logger.warning(
+                            "LLM result: relevance_score had wrong type, coercing to None."
+                        )
+                        result["relevance_score"] = None
+                    if not isinstance(result.get("category"), str):
+                        logger.warning("LLM result: category had wrong type, coercing to None.")
+                        result["category"] = None
+                    if not isinstance(result.get("reason"), str):
+                        logger.warning(
+                            "LLM result: reason had wrong type, coercing to empty string."
+                        )
+                        result["reason"] = ""
+                    if not isinstance(result.get("include"), bool):
+                        # Accept "true"/"false" strings as well
+                        if isinstance(result.get("include"), str):
+                            logger.warning("LLM result: include was string, coercing to bool.")
+                            result["include"] = result["include"].strip().lower() == "true"
+                        else:
+                            logger.warning("LLM result: include had wrong type, coercing to None.")
+                            result["include"] = None
+                    return result
+                except Exception as e:
+                    logger.warning(
+                        f"LLM JSON parse failed for categorization/scoring: {e}\nResponse: {text}"
+                    )
+            else:
+                logger.warning(
+                    f"No JSON object found in LLM response for categorization/scoring: {text}"
+                )
+            return {
+                "category": None,
+                "relevance_score": None,
+                "include": None,
+                "reason": "LLM failed to respond correctly.",
+            }
 
     def _extract_with_llm(self, pdf_path: Path) -> Dict[str, Any]:
-        """Extract metadata using Ollama LLM (same model as summaries)."""
+        """Extract metadata using LLM (Ollama or Gemini)."""
         try:
-            # (imports removed, use top-level imports)
+            from config import Config
+
+            cfg = Config()
+            provider = getattr(cfg, "llm_provider", "ollama")
 
             # Extract first page text
             doc = fitz.open(pdf_path)
@@ -167,41 +202,51 @@ class MetadataExtractor:
                     + ("... [truncated]" if len(first_page_text) > 2000 else "")
                 )
             )
-            # logger.info(f"[LLM][EXTRACT][PROMPT] Input prompt for metadata extraction from {pdf_path.name}:\n{prompt}")
-            # Use the same model as summaries (deepseek-r1:8b or from config)
-            model = None
-            try:
-                from config import Config
-
-                model = Config().ollama.summarize_model
-            except Exception:
-                model = "deepseek-r1:8b"
-            response = ollama.generate(
-                model=model,
-                prompt=prompt,
-                options={"temperature": 0.1},
-            )
-            text = response["response"].strip()
-            # logger.info(f"[LLM][EXTRACT][RAW_RESPONSE] LLM response for metadata extraction from {pdf_path.name}:\n{text}")
-            # Robustly extract the first valid JSON object from the response
-            json_match = re.search(r"{[\s\S]*}", text)
-            if json_match:
-                json_str = json_match.group(0)
+            options: dict = {"temperature": 0.1}
+            if provider == "gemini":
+                options["schema"] = MetadataSchema
+                # For Gemini, don't specify model (use default from config)
+                model = None
+            else:
+                # Use the same model as summaries for Ollama
                 try:
-                    meta = _json.loads(json_str)
-                    # Ensure authors is a list
-                    if meta.get("authors") is None:
-                        meta["authors"] = []
-                    elif not isinstance(meta["authors"], list):
-                        meta["authors"] = [str(meta["authors"])]
-                except Exception as e:
+                    model = Config().ollama.summarize_model
+                except Exception:
+                    model = "deepseek-r1:8b"
+            response = llm_generate(
+                prompt=prompt,
+                model=model,
+                options=options,
+            )
+            if provider == "gemini":
+                meta = dict(response["response"])
+                # Ensure authors is a list
+                if meta.get("authors") is None:
+                    meta["authors"] = []
+                elif not isinstance(meta["authors"], list):
+                    meta["authors"] = [str(meta["authors"])]
+            else:
+                text = response["response"].strip()
+                json_match = re.search(r"{[\s\S]*}", text)
+                if json_match:
+                    json_str = json_match.group(0)
+                    try:
+                        meta = _json.loads(json_str)
+                        # Ensure authors is a list
+                        if meta.get("authors") is None:
+                            meta["authors"] = []
+                        elif not isinstance(meta["authors"], list):
+                            meta["authors"] = [str(meta["authors"])]
+                    except Exception as e:
+                        logger.warning(
+                            f"LLM JSON parse failed for {pdf_path.name}: {e}\nResponse: {text}"
+                        )
+                        return {}
+                else:
                     logger.warning(
-                        f"LLM JSON parse failed for {pdf_path.name}: {e}\nResponse: {text}"
+                        f"No JSON object found in LLM response for {pdf_path.name}: {text}"
                     )
                     return {}
-            else:
-                logger.warning(f"No JSON object found in LLM response for {pdf_path.name}: {text}")
-                return {}
 
             metadata: Dict[str, Any] = meta
 
@@ -217,8 +262,6 @@ class MetadataExtractor:
             # Generate BibTeX
             bibtex = self._generate_bibtex(metadata, pdf_path)
             metadata["bibtex"] = bibtex
-
-            # logger.info(f"[META][FINAL] {pdf_path.name}: {metadata}")
             return metadata
         except Exception as e:
             logger.warning(f"LLM extraction failed for {pdf_path.name}: {e}")
