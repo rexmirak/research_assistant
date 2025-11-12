@@ -27,6 +27,7 @@ setup(
         "pandas>=2.0.0",
         "openpyxl>=3.1.0",
         "sqlalchemy>=2.0.0",
+        "filelock>=3.12.0",
         "tqdm>=4.66.0",
         "coloredlogs>=15.0",
         "python-dotenv>=1.0.0",
