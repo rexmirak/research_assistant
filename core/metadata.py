@@ -87,24 +87,49 @@ class MetadataExtractor:
 
         categories_str = ", ".join(available_categories) if available_categories else ""
         prompt = (
-            f"You are an expert research assistant. Given the research topic and a paper, do the following:\n"
-            "1. Carefully read the topic, title, and abstract.\n"
-            "2. Compare and contrast ALL available categories, explaining for each why it may or may not fit.\n"
-            "3. Justify in detail why the chosen category is the best fit for this paper.\n"
-            "4. Explicitly state why other categories are less suitable.\n"
-            "5. You are allowed to create a new category if none of the provided categories are a good fit, and explain why.\n"
-            "6. Be as accurate and specific as possible.\n"
-            f"\nResearch Topic:\n{topic}\n\n"
-            f"Paper Title: {title}\n\n"
-            f"Paper Abstract: {abstract or 'Not available'}\n\n"
-            + (f"Available Categories: {categories_str}\n\n" if categories_str else "")
-            + "After your reasoning, respond in JSON format ONLY:\n"
+            f"You are an expert research assistant specializing in paper categorization. "
+            f"Use step-by-step reasoning to categorize this paper accurately.\n\n"
+            f"RESEARCH TOPIC:\n{topic}\n\n"
+            f"PAPER TITLE:\n{title}\n\n"
+            f"PAPER CONTENT (Abstract + Introduction):\n{abstract or 'Not available'}\n\n"
+            + (f"AVAILABLE CATEGORIES:\n{categories_str}\n\n" if categories_str else "")
+            + "STEP-BY-STEP REASONING PROCESS:\n\n"
+            "Step 1 - UNDERSTAND THE PAPER:\n"
+            "- What is the main focus/contribution of this paper?\n"
+            "- What specific problem does it address?\n"
+            "- What methods or techniques does it discuss?\n"
+            "- What are the key concepts, keywords, and technical terms?\n\n"
+            "Step 2 - ANALYZE ALIGNMENT WITH RESEARCH TOPIC:\n"
+            "- How does this paper relate to the research topic?\n"
+            "- What specific aspects of the topic does it address?\n"
+            "- Does it provide theoretical foundations, empirical results, practical techniques, or survey/overview?\n"
+            "- What is the relevance score (0-10) and why?\n\n"
+            "Step 3 - EVALUATE EACH CATEGORY:\n"
+            "For EACH available category, explicitly consider:\n"
+            "- Does the paper's focus align with this category?\n"
+            "- What keywords or concepts match or don't match?\n"
+            "- Rate the fit: strong/moderate/weak/none and explain why\n\n"
+            "Step 4 - SELECT BEST CATEGORY:\n"
+            "- Which category has the STRONGEST alignment?\n"
+            "- If no category fits well, what new category name would be more appropriate?\n"
+            "- Why is this category better than the others?\n\n"
+            "Step 5 - MAKE INCLUSION DECISION:\n"
+            "- Should this paper be included (true) or excluded (false) from the research collection?\n"
+            "- Consider: relevance score, topic alignment, quality of content\n"
+            "- Explain your decision\n\n"
+            "After completing your reasoning, output ONLY valid JSON:\n"
             "{\n"
-            '  "category": "category_name",\n'
+            '  "category": "exact_category_name_or_new_category",\n'
             '  "relevance_score": 0-10,\n'
-            '  "include": true/false,\n'
-            '  "reason": "brief explanation"\n'
-            "}"
+            '  "include": true or false,\n'
+            '  "reason": "concise explanation of categorization and inclusion decision"\n'
+            "}\n\n"
+            "IMPORTANT:\n"
+            "- Be precise and analytical in your reasoning\n"
+            "- Consider ALL available categories before deciding\n"
+            "- Choose the MOST SPECIFIC category that fits\n"
+            "- Only create a new category if truly necessary\n"
+            "- Base your decision on the paper's actual content and contributions"
         )
 
         from config import Config
@@ -178,29 +203,36 @@ class MetadataExtractor:
             cfg = Config()
             provider = getattr(cfg, "llm_provider", "ollama")
 
-            # Extract first page text
+            # Extract first 5 pages for better abstract + intro extraction
             doc = fitz.open(pdf_path)
-            page = doc.load_page(0)
-            first_page_text = page.get_text("text")
+            pages_text = []
+            max_pages = min(5, doc.page_count)
+            for page_num in range(max_pages):
+                page = doc.load_page(page_num)
+                pages_text.append(page.get_text("text"))
             doc.close()
-            # Schema-based prompt
+
+            # Combine first pages (up to 5000 chars for better abstract+intro coverage)
+            combined_text = "\n".join(pages_text)[:5000]
+
+            # Schema-based prompt - ask for abstract+intro combined
             prompt = (
                 "You are an expert at extracting structured metadata from research papers. "
-                "Given the first page of a paper, extract the following fields and output ONLY a valid JSON object matching this schema. "
+                "Given the first pages of a paper, extract the following fields and output ONLY a valid JSON object matching this schema. "
                 "\n\nSCHEMA (output must be valid JSON, no extra text):\n"
                 "{\n"
                 '  "title": string or null,\n'
                 '  "authors": list of strings or null,\n'
                 '  "year": string or null,\n'
                 '  "venue": string or null,\n'
-                '  "abstract": string or null\n'
+                '  "abstract": string or null (combine abstract and introduction sections for comprehensive content)\n'
                 "}\n\n"
+                "IMPORTANT: For the 'abstract' field, extract both the abstract AND introduction sections together. "
+                "This provides richer context for categorization. Combine them into a single coherent text.\n\n"
                 "If a field is missing, use null.\n"
-                "First page text:\n"
-                + (
-                    first_page_text[:2000]
-                    + ("... [truncated]" if len(first_page_text) > 2000 else "")
-                )
+                "First pages text:\n"
+                + combined_text
+                + ("... [truncated]" if len("\n".join(pages_text)) > 5000 else "")
             )
             options: dict = {"temperature": 0.1}
             if provider == "gemini":
