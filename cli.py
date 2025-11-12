@@ -423,6 +423,8 @@ def process(
                 # tqdm will auto-adjust based on actual timing
                 smoothing=0.1,  # More responsive to recent timing changes
                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+                position=0,  # Force single position to prevent multiple bars
+                dynamic_ncols=False,  # Prevent width recalculation issues
             )
         )
     # Filter out None results (skipped/diverted)
@@ -587,6 +589,8 @@ def process(
                 unit="paper",
                 ncols=80,
                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+                position=0,  # Force single position to prevent multiple bars
+                dynamic_ncols=False,  # Prevent width recalculation issues
             )
         )
 
