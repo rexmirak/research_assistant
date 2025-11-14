@@ -7,6 +7,12 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+# Import rate limiter
+try:
+    from utils.rate_limiter import get_rate_limiter
+except ImportError:
+    get_rate_limiter = None
+
 # Import Ollama and Gemini clients
 try:
     import ollama
@@ -31,6 +37,12 @@ def llm_generate(
     cfg = Config()
     provider = getattr(cfg, "llm_provider", "ollama")
     options = options or {}
+    
+    # Apply rate limiting for Gemini
+    if provider == "gemini" and get_rate_limiter:
+        rate_limiter = get_rate_limiter(cfg)
+        rate_limiter.wait_if_needed()
+    
     logger.info(
         f"[LLM REQUEST] Provider: {provider}, Model: {model}, Prompt: {prompt[:500]}{'... [truncated]' if len(prompt) > 500 else ''}"
     )

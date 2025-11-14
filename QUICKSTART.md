@@ -1,41 +1,75 @@
-# 🎯 Research Assistant - Complete Implementation
+# 🎯 Research Assistant - Dynamic LLM-Driven Taxonomy
 
 ## ✅ What's Been Built
 
-A **production-ready, fully-functional research paper analysis pipeline** that processes hundreds of PDFs with:
+A **production-ready, fully-functional research paper analysis pipeline** with **dynamic LLM-generated categories**:
 
-1. **Accurate PDF parsing** (PyMuPDF + OCR + fallbacks)
-2. **LLM-based metadata extraction** (Local Ollama or Cloud Gemini API)
-3. **Smart deduplication** (MinHash near-duplicate detection)
-4. **AI-powered relevance scoring** (LLM-based, 0-10 scale)
-5. **Category validation & recategorization** (LLM-based)
-6. **Topic-focused summaries** (per paper + aggregated by category)
-7. **Move tracking system** ⭐ (prevents duplicate analysis)
-8. **Multiple output formats** (JSONL + CSV + Markdown)
-9. **Comprehensive testing** (100+ unit and integration tests)
+1. **🤖 LLM-Driven Taxonomy** ⭐⭐⭐ (Categories generated from topic, NO hardcoded categories!)
+2. **📊 Multi-Category Scoring** (Papers scored across ALL categories simultaneously)
+3. **📄 Accurate PDF parsing** (PyMuPDF + OCR + fallbacks)
+4. **🔍 LLM-based metadata extraction** (Local Ollama or Cloud Gemini API)
+5. **🔄 Smart deduplication** (MinHash near-duplicate detection)
+6. **🎯 Topic relevance filtering** (Papers scored 1-10, quarantine below threshold)
+7. **📝 Topic-focused summaries** (per paper + aggregated by category)
+8. **💾 Intelligent resume system** (Index-based, skips analyzed papers)
+9. **📤 Multiple output formats** (JSONL + CSV + Markdown + Categories JSON)
+10. **✅ Comprehensive testing** (100+ unit and integration tests)
 
 ## 🔑 Critical Features
 
-### Move Tracking System (Your Key Requirement)
-**Problem**: Papers moved between categories during analysis could be processed twice.
+### 🆕 Dynamic Category Generation (Revolutionary!)
+**What it does**: LLM analyzes your research topic and generates relevant categories with definitions.
 
-**Solution**: Manifest system per category:
-- Tracks every analyzed paper by content hash
-- Records move history (from → to, reason, timestamp)
-- Skips papers with status "moved_out" in source category
-- Links moved-in papers to original location
-- **Prevents duplicate entries in final output** ✅
+**Key Innovation**:
+- **NO papers used** - Categories generated from topic description alone
+- **NO hardcoded categories** - Completely dynamic based on your research area
+- **Cached for efficiency** - Categories reused across runs unless regenerated
 
-### Runtime Configuration (Generic Design)
-- **No hardcoded topics**: Topic provided via CLI `--topic "..."`
-- **No hardcoded paths**: Root directory via CLI `--root-dir /path`
-- **Everything configurable**: Models, thresholds, workers via CLI or YAML
+**Example**:
+```bash
+# You provide a topic:
+--topic "Prompt Injection Attacks in Large Language Models"
 
-### Smart File Organization
+# LLM generates categories like:
+- attack_vectors
+- defense_mechanisms  
+- detection_methods
+- robustness_evaluation
+- ethical_considerations
+... (and 10 more!)
+```
+
+### 📊 Multi-Category Scoring
+**What it does**: Each paper scored against ALL categories in a single API call.
+
+**Benefits**:
+- **Best-fit placement**: Paper goes to highest-scoring category
+- **Full visibility**: See how paper fits across all categories
+- **Efficient**: 2 API calls per paper (not 2N calls)
+
+**Example Output**:
+```json
+{
+  "topic_relevance": 8,
+  "category_scores": {
+    "attack_vectors": 9,
+    "defense_mechanisms": 3,
+    "detection_methods": 6
+  },
+  "best_category": "attack_vectors"
+}
+```
+
+### 🎯 Smart Topic Filtering
+- Papers with `topic_relevance < threshold` → `quarantined/`
+- Unreadable papers → `need_human_element/`
 - Duplicates → `repeated/`
-- Unrelated (low score) → `quarantined/`
-- Recategorized papers physically moved with tracking
-- Original locations preserved in manifests
+- Configurable threshold (default: 5/10)
+
+### 💾 Resume System
+- **Index-based**: Checks `index.jsonl` for `analyzed: true`
+- **Cache-aware**: Loads cached metadata and classifications
+- **Efficient**: Skips re-processing, only handles new papers
 
 ## 📁 Project Structure
 
@@ -113,14 +147,17 @@ make check-services
 
 ### 3. Prepare Your Papers
 ```
+# 🆕 NEW: Papers in flat directory (NO pre-categorization needed!)
 your_papers/
-├── Machine_Learning/
-│   ├── paper1.pdf
-│   └── paper2.pdf
-├── Computer_Vision/
-│   └── paper3.pdf
-└── NLP/
-    └── paper4.pdf
+├── paper1.pdf
+├── paper2.pdf
+├── paper3.pdf
+└── paper4.pdf
+
+# LLM will:
+# 1. Generate categories from your topic
+# 2. Score each paper across all categories  
+# 3. Move papers to best-fit folders automatically
 ```
 
 ### 4. Run Pipeline
@@ -128,22 +165,31 @@ your_papers/
 # Activate environment
 source venv/bin/activate
 
-# Run with Ollama (local)
+# 🆕 NEW: Basic usage with Gemini (recommended)
 python cli.py process \
   --root-dir /path/to/your_papers \
-  --topic "Your detailed research topic description here" \
-  --llm-provider ollama
+  --topic "Prompt Injection Attacks in Large Language Models" \
+  --llm-provider gemini \
+  --workers 2
 
-# Run with Gemini (cloud - requires GEMINI_API_KEY in .env)
+# With Ollama (local - requires models)
 python cli.py process \
   --root-dir /path/to/your_papers \
-  --topic "Your research topic" \
-  --llm-provider gemini
+  --topic "Your detailed research topic" \
+  --llm-provider ollama \
+  --workers 2
 
-# Or with Makefile:
-make run \
-  ROOT_DIR=/path/to/your_papers \
-  TOPIC="Your research topic"
+# Custom topic relevance threshold
+python cli.py process \
+  --root-dir /path/to/your_papers \
+  --topic "Your topic" \
+  --min-topic-relevance 7  # Stricter (default: 5)
+
+# Force regenerate categories
+python cli.py process \
+  --root-dir /path/to/your_papers \
+  --topic "Your topic" \
+  --force-regenerate-categories
 ```
 
 ## 📊 What You Get
@@ -151,33 +197,42 @@ make run \
 ### Outputs Directory Structure
 ```
 outputs/
+├── categories.json          ← 🆕 LLM-generated taxonomy with definitions!
 ├── index.jsonl              ← Machine-readable full index
 ├── index.csv                ← Spreadsheet (open in Excel/Numbers)
-├── statistics.json          ← Score distributions
 ├── summaries/
-│   ├── Machine_Learning.md  ← Per-category summaries
-│   ├── Computer_Vision.md
-│   └── NLP.md
+│   ├── attack_vectors.md    ← 🆕 Dynamic category names from LLM
+│   ├── defense_mechanisms.md
+│   ├── detection_methods.md
+│   ├── quarantined.md       ← Papers below topic relevance threshold
+│   └── repeated.md          ← Duplicate papers
 ├── logs/
-│   ├── pipeline_*.log       ← Execution logs
-│   └── moves.log            ← File move history
+│   └── pipeline_YYYYMMDD_HHMMSS.log  ← Execution logs
 └── manifests/
-    ├── Machine_Learning.manifest.json
-    ├── Computer_Vision.manifest.json
-    └── repeated.manifest.json
+    ├── attack_vectors.manifest.json  ← 🆕 Dynamic categories
+    ├── defense_mechanisms.manifest.json
+    ├── quarantined.manifest.json
+    ├── repeated.manifest.json
+    └── need_human_element.manifest.json
 ```
 
-### CSV Columns (index.csv)
+### 🆕 CSV Columns (index.csv)
+**New fields**:
 - **paper_id**: Unique identifier
-- **title**, **authors**, **year**, **venue**, **doi**
-- **bibtex**: Full citation ready for LaTeX
-- **category**: Current category
-- **relevance_score**: 0-10 relevance to your topic
-- **include**: Boolean for inclusion recommendation
-- **status**: active | moved | duplicate | quarantined
+- **title**, **authors**, **year**, **venue**, **doi**, **bibtex**
+- **category**: Final category (best-fit from LLM)
+- **topic_relevance**: 1-10 relevance to research topic
+- **category_scores**: JSON dict with scores for ALL categories
+- **reasoning**: LLM explanation for categorization
 - **duplicate_of**: Link to canonical paper if duplicate
-- **current_path**, **original_path**: File locations
+- **path**: Current file location
 - **summary_file**: Link to markdown summary
+- **analyzed**: Boolean (processing complete)
+
+**Removed** (from old system):
+- ~~original_category~~ - Papers start in flat directory
+- ~~status~~ - Replaced by explicit category
+- ~~include~~ - Replaced by topic_relevance threshold
 
 ### Markdown Summaries
 Each category gets a summary file with:

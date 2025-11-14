@@ -75,6 +75,16 @@ class GeminiConfig(BaseModel):
     """Gemini API configuration."""
 
     api_key: Optional[str] = None
+    model: str = "gemini-2.0-flash-exp"
+    temperature: float = 0.1
+
+
+class RateLimitConfig(BaseModel):
+    """Rate limiting configuration for API calls."""
+
+    rpm_limit: int = 10  # Requests per minute (Gemini free tier)
+    rpd_limit: int = 500  # Requests per day (Gemini free tier)
+    enabled: bool = True  # Enable rate limiting
 
 
 class Config(BaseModel):
@@ -82,6 +92,7 @@ class Config(BaseModel):
 
     llm_provider: str = Field(default="ollama")  # or "gemini"
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     crossref: CrossrefConfig = Field(default_factory=CrossrefConfig)

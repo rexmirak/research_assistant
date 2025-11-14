@@ -1,70 +1,75 @@
 # Research Assistant
 
-An intelligent pipeline for processing research papers using LLMs (Ollama or Gemini), accurate PDF parsing, metadata extraction, relevance scoring, deduplication, and automated summarization.
+An intelligent pipeline for processing research papers using LLMs (Ollama or Gemini) with **dynamic LLM-driven category generation**, accurate PDF parsing, metadata extraction, multi-category relevance scoring, deduplication, and automated summarization.
 
 ## Features
 
-- **Flexible LLM Support**: Use local Ollama models or Google Gemini API
-- **Generic & Configurable**: Runtime topic and directory configuration (no hardcoding)
-- **Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf + Tesseract) + pdfminer.six
-- **LLM-Based Metadata Extraction**: Extract titles, authors, abstracts, years using local or cloud LLMs
-- **Smart Deduplication**: Exact (hash-based) and near-duplicate (MinHash-based) detection
-- **Relevance Scoring**: LLM-based scoring (0-10) with category assignment and inclusion decision
-- **Category Validation**: LLM-based recategorization with confidence tracking
-- **Topic-Focused Summaries**: Per-paper summaries with "how this helps your research"
-- **Move Tracking**: Manifest per category prevents duplicate analysis after recategorization
-- **Resumable**: SQLite cache for embeddings and OCR outputs
-- **Multiple Outputs**: JSONL master index + CSV spreadsheet + Markdown summaries per category
-- **Comprehensive Testing**: 100+ unit and integration tests with 41%+ coverage
+- **🤖 Dynamic LLM-Driven Taxonomy**: LLM generates categories from your research topic (no hardcoded categories!)
+- **📊 Multi-Category Scoring**: Papers scored across ALL categories simultaneously for best-fit placement
+- **🎯 Flexible LLM Support**: Use local Ollama models or Google Gemini API
+- **🔧 Generic & Configurable**: Runtime topic and directory configuration (no hardcoding)
+- **📄 Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf + Tesseract) + pdfminer.six
+- **🔍 LLM-Based Metadata Extraction**: Extract titles, authors, abstracts, years using local or cloud LLMs
+- **🔄 Smart Deduplication**: Exact (hash-based) and near-duplicate (MinHash-based) detection
+- **⚡ Efficient API Usage**: 2 LLM calls per paper (metadata + classification)
+- **📝 Topic-Focused Summaries**: Per-paper summaries with "how this helps your research"
+- **💾 Resumable**: SQLite cache for embeddings and OCR outputs, index-based resume logic
+- **📤 Multiple Outputs**: JSONL master index + CSV spreadsheet + Markdown summaries per category
+- **✅ Comprehensive Testing**: 100+ unit and integration tests with 41%+ coverage
 
-## Pipeline Flow
+## Pipeline Flow (8 Passes)
 
 ```mermaid
 graph TD
-    A[📁 Input: PDF Directory] --> B[📋 Stage 1: Inventory]
-    B -->|Discover all PDFs & categories| C[📄 Stage 2: Parse & Extract Text]
-    C -->|PyMuPDF + OCR fallback| D[🤖 Stage 3: LLM Metadata Extraction]
-    D -->|Title, authors, abstract, year| E[🔍 Stage 4: Deduplication]
-    E -->|Exact hash + MinHash LSH| F{Duplicate?}
-    F -->|Yes| G[📦 Move to repeated/]
-    F -->|No| H[🎯 Stage 5: LLM Scoring & Categorization]
-    H -->|Relevance 0-10 + category| I{Include?}
-    I -->|Score < threshold| J[🚫 Move to quarantined/]
-    I -->|Score >= threshold| K[📝 Stage 6: LLM Summarization]
-    K -->|Topic-focused summaries| L[💾 Stage 7: Output Generation]
-    L --> M[📊 index.csv]
-    L --> N[📋 index.jsonl]
-    L --> O[📝 summaries/*.md]
-    L --> P[📜 manifests/*.json]
+    A[📁 Input: PDF Directory + Topic] --> B[🤖 PASS 1: LLM Taxonomy Generation]
+    B -->|Generate categories from topic ONLY| C[� PASS 2: Inventory PDFs]
+    C -->|Discover all PDFs| D[🔍 PASS 3: Metadata + Classification]
+    D -->|Extract metadata + Multi-category scoring| E{Readable?}
+    E -->|No| F[� Move to need_human_element/]
+    E -->|Yes| G{Topic Relevance?}
+    G -->|< threshold| H[� Move to quarantined/]
+    G -->|>= threshold| I[📁 PASS 4: Move to Best Category]
+    I -->|Highest scoring category| J[🔄 PASS 5: Deduplication]
+    J -->|MinHash LSH| K{Duplicate?}
+    K -->|Yes| L[� Move to repeated/]
+    K -->|No| M[📝 PASS 6: Update Manifests]
+    M --> N[✍️ PASS 7: LLM Summarization]
+    N -->|Topic-focused summaries| O[💾 PASS 8: Generate Index]
+    O --> P[📊 index.csv]
+    O --> Q[📋 index.jsonl]
+    O --> R[📝 summaries/*.md]
+    O --> S[📜 manifests/*.json]
+    O --> T[🗂️ categories.json]
     
+    style B fill:#e1f5ff
     style D fill:#e1f5ff
-    style H fill:#e1f5ff
-    style K fill:#e1f5ff
-    style G fill:#ffe1e1
-    style J fill:#ffe1e1
-    style M fill:#e1ffe1
-    style N fill:#e1ffe1
-    style O fill:#e1ffe1
+    style N fill:#e1f5ff
+    style F fill:#ffe1e1
+    style H fill:#ffe1e1
+    style L fill:#ffe1e1
     style P fill:#e1ffe1
+    style Q fill:#e1ffe1
+    style R fill:#e1ffe1
+    style S fill:#e1ffe1
+    style T fill:#e1ffe1
 ```
 
 ## Architecture
 
 ```
 research_assistant/
-├── cli.py                  # Main CLI entry point
+├── cli.py                  # Main CLI entry point (8-pass pipeline)
 ├── config.py               # Configuration and settings
 ├── core/
+│   ├── taxonomy.py         # 🆕 LLM-based category generation from topic
 │   ├── inventory.py        # Directory traversal and PDF discovery
 │   ├── parser.py           # PDF text extraction (PyMuPDF + OCR)
-│   ├── metadata.py         # LLM-based metadata extraction
+│   ├── metadata.py         # LLM metadata extraction + multi-category scoring
 │   ├── dedup.py            # MinHash near-duplicate detection
 │   ├── embeddings.py       # Ollama embedding generation
-│   ├── scoring.py          # LLM-based relevance scoring
-│   ├── classifier.py       # LLM-based category validation
 │   ├── summarizer.py       # Topic-focused summary generation
-│   ├── mover.py            # File moving with manifest tracking
-│   ├── manifest.py         # Category manifest tracking
+│   ├── mover.py            # File moving with dynamic folder creation
+│   ├── manifest.py         # Simplified category manifest tracking
 │   └── outputs.py          # JSONL, CSV, and Markdown generation
 ├── utils/
 │   ├── cache_manager.py    # SQLite-based caching
@@ -111,33 +116,43 @@ echo "GEMINI_API_KEY=your_api_key_here" > .env
 ## Quick Start
 
 ```bash
-# Run with Ollama (local)
+# Basic usage with Gemini (recommended)
 python cli.py process \
   --root-dir /path/to/papers \
-  --topic "Your research topic description here" \
-  --llm-provider ollama \
-  --output-dir ./outputs \
-  --cache-dir ./cache
+  --topic "Prompt Injection Attacks in Large Language Models" \
+  --llm-provider gemini \
+  --workers 2
 
-# Run with Gemini (requires GEMINI_API_KEY in .env)
+# With Ollama (local, requires models installed)
 python cli.py process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
-  --llm-provider gemini
+  --llm-provider ollama \
+  --workers 2
+
+# Custom topic relevance threshold (default: 5/10)
+python cli.py process \
+  --root-dir /path/to/papers \
+  --topic "Your research topic" \
+  --min-topic-relevance 7
+
+# Resume from interrupted run (skips analyzed papers)
+python cli.py process \
+  --root-dir /path/to/papers \
+  --topic "Your research topic" \
+  --resume
+
+# Force regenerate categories (ignore cached taxonomy)
+python cli.py process \
+  --root-dir /path/to/papers \
+  --topic "Your research topic" \
+  --force-regenerate-categories
 
 # Dry-run (no file moves)
 python cli.py process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
-  --llm-provider ollama \
   --dry-run
-
-# Resume a previous run (uses cached results)
-python cli.py process \
-  --root-dir /path/to/papers \
-  --topic "Your research topic" \
-  --llm-provider ollama \
-  --resume
 ```
 
 ## Configuration
@@ -146,104 +161,185 @@ Runtime configuration via CLI flags or `config.yaml`:
 
 ```yaml
 # config.yaml (optional)
-llm_provider: ollama  # or 'gemini'
-relevance_threshold: 7.0  # Include papers with score >= 7.0
-dedup_similarity: 0.95    # Near-duplicate threshold
+llm_provider: gemini  # or 'ollama'
+
+# Scoring thresholds
+scoring:
+  min_topic_relevance: 5  # Papers below this go to quarantined/ (1-10 scale)
+
+# Deduplication
+dedup:
+  similarity_threshold: 0.95
+  use_minhash: true
+  num_perm: 128
+
+# LLM providers
 ollama:
   summarize_model: "deepseek-r1:8b"
   classify_model: "deepseek-r1:8b"
   embed_model: "nomic-embed-text"
   temperature: 0.1
+  base_url: "http://localhost:11434"
+
 gemini:
   api_key: null  # Set via GEMINI_API_KEY environment variable
-  model: "gemini-2.0-flash-exp"
   temperature: 0.1
+
+# Metadata enrichment
 crossref:
   enabled: true
   email: "your.email@domain.com"  # Polite pool (optional)
+
+# File organization
 move:
   enabled: true
   track_manifest: true
+  create_symlinks: false
+
+# Processing
+processing:
+  workers: 2  # Parallel workers (recommend 2 for API rate limits)
+  batch_size: 32
 ```
 
-## Move Tracking & Manifest System
+## Dynamic Category Generation
 
-**Problem**: If a paper is moved from `CategoryA/` to `CategoryB/` during analysis, we must ensure it's not analyzed twice.
+**How it works**:
 
-**Solution**: Each category maintains a `.manifest.json`:
-- Tracks all papers ever analyzed in this category (by content hash)
-- Records move history (from/to, timestamp, reason)
-- On processing, skip papers already in manifest with status "moved_out"
-- When moving a paper in, add to destination manifest with status "moved_in" and link to original
+1. **LLM generates categories from topic ONLY** (no papers analyzed yet)
+   - Example topic: "Prompt Injection Attacks in Large Language Models"
+   - LLM generates 10-15 relevant categories with definitions
+   - Cached in `outputs/categories.json` and `cache/categories.json`
 
-**Manifest Entry Example**:
+2. **Multi-category scoring** for each paper:
+   - Paper scored against ALL categories simultaneously (1-10 scale)
+   - Returns: `topic_relevance`, `category_scores` dict, `reasoning`
+   - Paper placed in highest-scoring category
+
+3. **Topic relevance filtering**:
+   - Papers with `topic_relevance < threshold` → `quarantined/`
+   - Configurable via `--min-topic-relevance` (default: 5/10)
+
+**Example Categories Generated**:
+```json
+{
+  "attack_vectors": "Papers describing methods to perform prompt injection...",
+  "defense_mechanisms": "Papers proposing techniques to defend against...",
+  "detection_methods": "Papers focusing on identifying attacks...",
+  "robustness_evaluation": "Papers developing metrics and benchmarks..."
+}
+```
+
+## Manifest System & Resume Logic
+
+**Manifest Structure** (per category):
+- Tracks all papers in this category
+- Stores classification reasoning and scores
+- Enables resume functionality
+
+**Manifest Entry**:
 ```json
 {
   "paper_id": "abc123def456...",
-  "original_path": "CategoryA/smith2023.pdf",
-  "current_path": "CategoryB/smith2023.pdf",
-  "status": "moved_in",
-  "moved_from": "CategoryA",
-  "moved_at": "2025-11-09T14:23:00Z",
-  "reason": "Better fit for CategoryB based on content",
+  "title": "Defending Against Prompt Injection Attacks",
+  "path": "defense_mechanisms/smith2023.pdf",
+  "content_hash": "sha256:...",
+  "classification_reasoning": "Paper focuses on input validation...",
+  "relevance_score": 9,
+  "topic_relevance": 8,
   "analyzed": true
 }
 ```
+
+**Resume Logic**:
+- Checks `index.jsonl` for papers with `analyzed: true`
+- Skips re-processing, loads from cache
+- More efficient than re-running entire pipeline
 
 ## Output Structure
 
 ```
 outputs/
+├── categories.json          # 🆕 LLM-generated taxonomy with definitions
 ├── index.jsonl              # Full machine-readable index
 ├── index.csv                # Spreadsheet with all metadata
 ├── summaries/
-│   ├── CategoryA.md         # Summaries for all papers in CategoryA
-│   ├── CategoryB.md
+│   ├── attack_vectors.md    # 🆕 Dynamic category names
+│   ├── defense_mechanisms.md
+│   ├── quarantined.md
 │   └── ...
 ├── logs/
-│   ├── pipeline.log         # Detailed execution log
-│   └── moves.log            # All file moves with reasons
+│   └── pipeline_YYYYMMDD_HHMMSS.log  # Detailed execution log
 └── manifests/
-    ├── CategoryA.manifest.json
-    ├── CategoryB.manifest.json
-    └── ...
+    ├── attack_vectors.manifest.json  # 🆕 Dynamic categories
+    ├── defense_mechanisms.manifest.json
+    ├── quarantined.manifest.json
+    ├── repeated.manifest.json
+    └── need_human_element.manifest.json
 ```
 
-## CSV Columns
+## Index Fields (JSONL/CSV)
 
+**New fields**:
 - `paper_id`: Unique identifier (content hash)
-- `title`, `authors`, `year`, `venue`, `doi`
-- `bibtex`: Complete BibTeX citation
-- `category`: Current category
-- `original_category`: Initial category from folder
-- `relevance_score`: 0-10 relevance to topic
-- `include`: Boolean for inclusion in research
-- `duplicate_of`: Paper ID if this is a duplicate
+- `title`, `authors`, `year`, `venue`, `doi`, `bibtex`
+- `category`: Final category (best-fit from LLM scoring)
+- `topic_relevance`: 1-10 relevance to research topic
+- `category_scores`: JSON dict with scores for ALL categories
+- `reasoning`: LLM explanation for categorization
+- `duplicate_of`: Paper ID if duplicate
 - `is_duplicate`: Boolean flag
-- `status`: `active`, `duplicate`, `quarantined`, `moved`
-- `original_path`, `current_path`
+- `path`: Current file path
 - `summary_file`: Link to markdown summary
-- `notes`: Additional information
+- `analyzed`: Boolean (true when processing complete)
+
+**Removed fields** (from old system):
+- `original_category` - No longer tracked (papers start in flat directory)
+- `status` - Replaced by explicit category placement
+- `include` - Replaced by topic_relevance threshold
 
 ## Advanced Usage
 
-### Resume from specific stage
+### Custom topic relevance threshold
 ```bash
-python cli.py process --root-dir ./papers --topic "..." --start-from embeddings
-```
-
-### Custom thresholds
-```bash
+# Stricter filtering (only highly relevant papers)
 python cli.py process \
   --root-dir ./papers \
   --topic "..." \
-  --relevance-threshold 7.0 \
-  --dedup-threshold 0.98
+  --min-topic-relevance 7
+
+# More permissive (include more papers)
+python cli.py process \
+  --root-dir ./papers \
+  --topic "..." \
+  --min-topic-relevance 3
 ```
 
-### Export only (skip analysis)
+### Working with cached categories
 ```bash
-python cli.py export --cache-dir ./cache --output-dir ./outputs
+# Use cached taxonomy (fast)
+python cli.py process --root-dir ./papers --topic "..." --resume
+
+# Force regenerate taxonomy (if topic changed)
+python cli.py process \
+  --root-dir ./papers \
+  --topic "..." \
+  --force-regenerate-categories
+```
+
+### Parallel processing
+```bash
+# More workers (caution: may hit API rate limits)
+python cli.py process \
+  --root-dir ./papers \
+  --topic "..." \
+  --workers 4
+
+# Recommended for Gemini free tier (15 RPM limit)
+python cli.py process \
+  --root-dir ./papers \
+  --topic "..." \
+  --workers 2
 ```
 
 ## Troubleshooting
