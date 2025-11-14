@@ -1,3 +1,4 @@
+from typing import Dict
 from pydantic import BaseModel
 
 
@@ -14,6 +15,14 @@ class CategorizationSchema(BaseModel):
     relevance_score: float
     include: bool
     reason: str
+
+
+class MultiCategoryScoreSchema(BaseModel):
+    """Schema for multi-category scoring with topic relevance."""
+
+    topic_relevance: int  # 1-10 relevance to overall research topic
+    category_scores: Dict[str, int]  # category_name -> score (1-10)
+    reasoning: str  # Explanation of scoring and categorization
 
 
 """Metadata extraction using LLM and PDF heuristics."""
@@ -194,6 +203,141 @@ class MetadataExtractor:
                 "include": None,
                 "reason": "LLM failed to respond correctly.",
             }
+
+    def classify_paper_with_scores(
+        self,
+        title: str,
+        abstract: str,
+        topic: str,
+        categories: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """
+        Classify paper with relevance scores for all categories.
+
+        Args:
+            title: Paper title
+            abstract: Paper abstract + introduction
+            topic: Research topic
+            categories: Dictionary of category_name -> definition
+
+        Returns:
+            Dictionary with:
+                - topic_relevance: int (1-10)
+                - category_scores: dict {category_name: score (1-10)}
+                - best_category: str (category with highest score)
+                - reasoning: str (explanation)
+        """
+        # Build categories description
+        categories_desc = "\n".join(
+            [f"- {name}: {definition}" for name, definition in categories.items()]
+        )
+
+        prompt = f"""You are an expert research assistant evaluating paper relevance and categorization.
+
+RESEARCH TOPIC: {topic}
+
+PAPER TITLE: {title}
+
+PAPER CONTENT (Abstract + Introduction):
+{abstract or 'Not available'}
+
+AVAILABLE CATEGORIES:
+{categories_desc}
+
+YOUR TASK:
+1. Evaluate how relevant this paper is to the overall research topic "{topic}" (1-10 scale)
+   - 1-3: Not relevant or only tangentially related
+   - 4-6: Somewhat relevant, addresses related concepts
+   - 7-8: Highly relevant, directly addresses the topic
+   - 9-10: Extremely relevant, core contribution to the topic
+
+2. For EACH category above, rate how well this paper fits (1-10 scale):
+   - Consider the paper's focus, methodology, and contributions
+   - Compare against the category definition
+   - Be precise - different categories will have different scores
+
+3. Identify the BEST FITTING category (highest score)
+
+4. Provide clear reasoning for your scores
+
+Return ONLY valid JSON matching this structure:
+{{
+  "topic_relevance": <integer 1-10>,
+  "category_scores": {{
+    "category_name_1": <integer 1-10>,
+    "category_name_2": <integer 1-10>,
+    ...
+  }},
+  "reasoning": "Brief explanation of relevance and categorization"
+}}
+
+IMPORTANT:
+- All scores must be integers from 1 to 10
+- Score ALL categories (include all category names in category_scores)
+- Be discriminating - not everything scores 8-10
+- Base scores on actual paper content and category definitions
+"""
+
+        from config import Config
+
+        cfg = Config()
+        provider = getattr(cfg, "llm_provider", "ollama")
+        options: dict = {"temperature": 0.1}
+
+        if provider == "gemini":
+            options["schema"] = MultiCategoryScoreSchema
+            model = None
+        else:
+            model = "deepseek-r1:8b"
+
+        try:
+            response = llm_generate(
+                prompt=prompt,
+                model=model,
+                options=options,
+            )
+
+            if provider == "gemini":
+                result = dict(response["response"])
+            else:
+                text = response["response"].strip()
+                json_match = re.search(r"{[\s\S]*}", text)
+                if json_match:
+                    json_str = json_match.group(0)
+                    result = _json.loads(json_str)
+                else:
+                    logger.warning(f"No JSON in classification response: {text[:200]}")
+                    return self._fallback_classification(categories)
+
+            # Validate and add best_category
+            if not isinstance(result.get("category_scores"), dict):
+                logger.warning("Invalid category_scores format")
+                return self._fallback_classification(categories)
+
+            # Find best category
+            category_scores = result["category_scores"]
+            if category_scores:
+                best_category = max(category_scores.items(), key=lambda x: x[1])[0]
+                result["best_category"] = best_category
+            else:
+                result["best_category"] = None
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Classification failed: {e}")
+            return self._fallback_classification(categories)
+
+    def _fallback_classification(self, categories: Dict[str, str]) -> Dict[str, Any]:
+        """Fallback classification when LLM fails."""
+        # Default to first category with low scores
+        first_category = list(categories.keys())[0] if categories else "uncategorized"
+        return {
+            "topic_relevance": 1,
+            "category_scores": {name: 1 for name in categories.keys()},
+            "best_category": first_category,
+            "reasoning": "Classification failed - using fallback values",
+        }
 
     def _extract_with_llm(self, pdf_path: Path) -> Dict[str, Any]:
         """Extract metadata using LLM (Ollama or Gemini)."""

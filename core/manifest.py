@@ -16,38 +16,40 @@ class ManifestEntry:
 
     def __init__(self, data: Dict):
         self.paper_id: str = data["paper_id"]
-        self.original_path: str = data["original_path"]
-        self.current_path: str = data.get("current_path", data["original_path"])
-        self.status: str = data.get(
-            "status", "active"
-        )  # active, moved_out, moved_in, duplicate, quarantined
-        self.category: str = data["category"]
-        self.original_category: Optional[str] = data.get("original_category")
-        self.moved_from: Optional[str] = data.get("moved_from")
-        self.moved_to: Optional[str] = data.get("moved_to")
-        self.moved_at: Optional[str] = data.get("moved_at")
-        self.reason: Optional[str] = data.get("reason")
+        self.title: str = data.get("title", "")  # Added title field
+        self.path: str = data.get("path", data.get("current_path", data.get("original_path", "")))
+        self.content_hash: str = data["content_hash"]
+        self.classification_reasoning: Optional[str] = data.get("classification_reasoning")
+        self.relevance_score: Optional[int] = data.get("relevance_score")  # Score for this category
+        self.topic_relevance: Optional[int] = data.get("topic_relevance")  # Overall topic relevance
         self.analyzed: bool = data.get("analyzed", False)
         self.canonical_id: Optional[str] = data.get("canonical_id")  # For duplicates
-        self.content_hash: str = data["content_hash"]
+        
+        # Backward compatibility - maintain old fields if present
+        self._legacy_fields = {}
+        for key in ["status", "original_category", "moved_from", "moved_to", "moved_at", "reason", 
+                    "category", "original_path", "current_path"]:
+            if key in data:
+                self._legacy_fields[key] = data[key]
 
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
-        return {
+        result = {
             "paper_id": self.paper_id,
-            "original_path": self.original_path,
-            "current_path": self.current_path,
-            "status": self.status,
-            "category": self.category,
-            "original_category": self.original_category,
-            "moved_from": self.moved_from,
-            "moved_to": self.moved_to,
-            "moved_at": self.moved_at,
-            "reason": self.reason,
-            "analyzed": self.analyzed,
-            "canonical_id": self.canonical_id,
+            "title": self.title,
+            "path": self.path,
             "content_hash": self.content_hash,
+            "classification_reasoning": self.classification_reasoning,
+            "relevance_score": self.relevance_score,
+            "topic_relevance": self.topic_relevance,
+            "analyzed": self.analyzed,
         }
+        
+        # Add canonical_id only if it's a duplicate
+        if self.canonical_id:
+            result["canonical_id"] = self.canonical_id
+            
+        return result
 
 
 class CategoryManifest:
@@ -115,20 +117,26 @@ class CategoryManifest:
     def add_paper(
         self,
         paper_id: str,
+        title: str,
         path: str,
         content_hash: str,
-        status: str = "active",
-        original_category: Optional[str] = None,
+        classification_reasoning: Optional[str] = None,
+        relevance_score: Optional[int] = None,
+        topic_relevance: Optional[int] = None,
+        analyzed: bool = True,
     ) -> ManifestEntry:
         """
         Add paper to manifest.
 
         Args:
             paper_id: Unique paper identifier
+            title: Paper title
             path: Current file path
             content_hash: Content hash for dedup
-            status: Paper status
-            original_category: Original category if moved
+            classification_reasoning: LLM explanation for classification
+            relevance_score: Relevance score for THIS category (1-10)
+            topic_relevance: Overall topic relevance (1-10)
+            analyzed: Whether paper has been analyzed
 
         Returns:
             Manifest entry
@@ -136,13 +144,13 @@ class CategoryManifest:
         entry = ManifestEntry(
             {
                 "paper_id": paper_id,
-                "original_path": path,
-                "current_path": path,
-                "status": status,
-                "category": self.category,
-                "original_category": original_category or self.category,
+                "title": title,
+                "path": path,
                 "content_hash": content_hash,
-                "analyzed": False,
+                "classification_reasoning": classification_reasoning,
+                "relevance_score": relevance_score,
+                "topic_relevance": topic_relevance,
+                "analyzed": analyzed,
             }
         )
 
@@ -156,15 +164,10 @@ class CategoryManifest:
             entry = self.entries.pop(paper_id)
             self.content_hashes.discard(entry.content_hash)
 
-    def mark_moved_in(self, paper_id: str, from_category: str, new_path: str, reason: str):
-        """Mark paper as moved in from another category."""
+    def update_path(self, paper_id: str, new_path: str):
+        """Update paper path (e.g., after moving)."""
         if paper_id in self.entries:
-            entry = self.entries[paper_id]
-            entry.status = "moved_in"
-            entry.moved_from = from_category
-            entry.current_path = new_path
-            entry.moved_at = datetime.now().isoformat()
-            entry.reason = reason
+            self.entries[paper_id].path = new_path
 
     def mark_analyzed(self, paper_id: str):
         """Mark paper as analyzed."""
@@ -183,12 +186,13 @@ class CategoryManifest:
         return paper_id in self.entries and self.entries[paper_id].analyzed
 
     def should_skip(self, paper_id: str) -> bool:
-        """Check if paper should be skipped (moved out or duplicate)."""
+        """Check if paper should be skipped (already analyzed or duplicate)."""
         if paper_id not in self.entries:
             return False
 
-        status = self.entries[paper_id].status
-        return status in ["moved_out", "duplicate"]
+        entry = self.entries[paper_id]
+        # Skip if already analyzed or is a duplicate
+        return entry.analyzed or entry.canonical_id is not None
 
     def has_content_hash(self, content_hash: str) -> bool:
         """Check if content hash exists in manifest (for dedup)."""
@@ -202,8 +206,8 @@ class CategoryManifest:
         return None
 
     def get_active_papers(self) -> List[ManifestEntry]:
-        """Get all active papers (not moved out or duplicates)."""
-        return [e for e in self.entries.values() if e.status in ["active", "moved_in"]]
+        """Get all active papers (excluding duplicates)."""
+        return [e for e in self.entries.values() if e.canonical_id is None]
 
 
 class ManifestManager:

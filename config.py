@@ -38,7 +38,8 @@ class DedupConfig(BaseModel):
 class ScoringConfig(BaseModel):
     """Relevance scoring configuration."""
 
-    relevance_threshold: float = 6.5  # Include papers >= this score
+    relevance_threshold: float = 6.5  # Include papers >= this score (deprecated - use min_topic_relevance)
+    min_topic_relevance: int = 5  # Minimum topic relevance (1-10) to avoid quarantine
     min_score: float = 0.0
     max_score: float = 10.0
     use_abstract_only: bool = False  # If False, use title+abstract+intro

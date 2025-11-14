@@ -69,17 +69,15 @@ class OutputGenerator:
                 "venue",
                 "doi",
                 "category",
-                "original_category",
-                "relevance_score",
-                "include",
-                "status",
+                "topic_relevance",
+                "category_scores",
+                "reasoning",
                 "duplicate_of",
                 "is_duplicate",
-                "original_path",
-                "current_path",
+                "path",
                 "bibtex",
                 "summary_file",
-                "notes",
+                "analyzed",
             ]
 
             with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -90,6 +88,10 @@ class OutputGenerator:
                     # Format authors as string
                     if isinstance(record.get("authors"), list):
                         record["authors"] = "; ".join(record["authors"])
+                    
+                    # Format category_scores as JSON string
+                    if isinstance(record.get("category_scores"), dict):
+                        record["category_scores"] = json.dumps(record["category_scores"])
 
                     writer.writerow(record)
 
