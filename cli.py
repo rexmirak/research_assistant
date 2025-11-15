@@ -52,7 +52,7 @@ def cli():
     "--output-dir",
     default=None,
     type=click.Path(path_type=Path),
-    help="Output directory (default: ~/Desktop/output_DD_MMM_HH_MM)",
+    help="Parent directory for output (creates timestamped subfolder, default: Desktop)",
 )
 @click.option(
     "--cache-dir", default="./cache", type=click.Path(path_type=Path), help="Cache directory"
@@ -109,12 +109,21 @@ def process(
     else:
         config = Config()
 
-    # Set default output directory to Desktop with timestamp
+    # Always create timestamped output directory
+    timestamp = datetime.now().strftime("%d_%b_%H_%M")
+    
     if output_dir is None:
-        desktop = Path.home() / "Desktop"
-        timestamp = datetime.now().strftime("%d_%b_%H_%M")
-        output_dir = desktop / f"output_{timestamp}"
-        logger.info(f"Using default output directory: {output_dir}")
+        # Default: Desktop/output_timestamp
+        output_dir = Path.home() / "Desktop" / f"output_{timestamp}"
+    else:
+        # User specified a parent directory: create timestamped subfolder inside it
+        output_dir = Path(output_dir).expanduser().resolve() / f"output_{timestamp}"
+    
+    logger.info(f"Output directory: {output_dir}")
+
+    # Expand user paths for all directories
+    root_dir = Path(root_dir).expanduser().resolve()
+    cache_dir = Path(cache_dir).expanduser().resolve()
 
     # Override with CLI parameters
     config.root_dir = root_dir
