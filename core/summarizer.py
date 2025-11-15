@@ -1,11 +1,23 @@
 """Topic-focused summarization using LLM."""
 
+import json
 import logging
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, List
+from pydantic import BaseModel
 
 from utils.llm_provider import llm_generate
 
 logger = logging.getLogger(__name__)
+
+
+class PaperSummarySchema(BaseModel):
+    """Schema for structured paper summary."""
+    main_contributions: List[str]  # Key findings and contributions
+    topic_relevance: str  # How the paper relates to the research topic
+    key_techniques: List[str]  # Methods, datasets, or approaches used
+    potential_applications: str  # What this could contribute to the research
+    limitations: Optional[List[str]] = None  # Gaps or limitations mentioned
 
 
 class Summarizer:
@@ -36,7 +48,7 @@ class Summarizer:
         full_text: Optional[str] = None,
     ) -> str:
         """
-        Generate topic-focused summary of paper.
+        Generate topic-focused summary of paper using structured schema.
 
         Args:
             title: Paper title
@@ -50,18 +62,47 @@ class Summarizer:
             Markdown-formatted summary
         """
         try:
-            # Build prompt
+            # Build prompt with schema
             prompt = self._build_summary_prompt(title, abstract, intro, topic, metadata, full_text)
 
-            # Call provider-agnostic LLM
+            # Get provider
+            from config import Config
+            cfg = Config()
+            provider = getattr(cfg, "llm_provider", "ollama")
+            
+            # Call LLM with schema support for Gemini
+            options = {"temperature": self.temperature}
+            if provider == "gemini":
+                options["schema"] = PaperSummarySchema
+            
             response = llm_generate(
                 prompt=prompt,
                 model=self.model,
-                options={"temperature": self.temperature},
+                options=options,
             )
-            summary = response["response"].strip()
-            # Format as markdown
-            return self._format_summary(summary, metadata)
+            
+            # Parse structured response
+            if provider == "gemini":
+                # Gemini returns structured data directly
+                summary_data = response["response"]
+                if isinstance(summary_data, dict):
+                    structured_summary = summary_data
+                else:
+                    # Fallback: try to parse as JSON
+                    structured_summary = self._parse_json_response(str(summary_data))
+            else:
+                # Ollama returns text - parse JSON
+                response_text = response["response"].strip()
+                structured_summary = self._parse_json_response(response_text)
+            
+            # Validate and format
+            if structured_summary:
+                logger.info(f"Generated structured summary for '{title}'")
+                return self._format_structured_summary(structured_summary, metadata)
+            else:
+                logger.warning(f"Failed to parse structured summary for '{title}', using fallback")
+                return self._fallback_summary(title, abstract, metadata)
+                
         except Exception as e:
             logger.error(f"Summarization failed for {title}: {e}")
             return self._fallback_summary(title, abstract, metadata)
@@ -75,33 +116,117 @@ class Summarizer:
         metadata: Dict,
         full_text: Optional[str] = None,
     ) -> str:
-        """Build summarization prompt using only abstract to focus on key relations to research topic."""
+        """Build summarization prompt requesting structured JSON output."""
         # Use only abstract for focused, efficient summarization
         if abstract:
             content_str = f"Abstract: {abstract}"
         else:
             content_str = "Abstract not available"
 
-        return f"""Analyze this research paper's abstract and identify its key relations to the following research topic.
-
-Research Topic:
-{topic}
+        return f"""Analyze this research paper's abstract in relation to the research topic: "{topic}"
 
 Paper Title: {title}
 
 {content_str}
 
-Provide a concise analysis (max {self.max_summary_length} words) covering:
-1. Main contributions and key findings from the abstract
-2. Direct relevance to the research topic
-3. Specific connections or insights that relate to the topic
-4. What this paper could contribute to research on "{topic}"
-5. Leveragable information: techniques, methodologies, datasets, or findings that could be applied to advance research on the topic
-6. Potential gaps or limitations mentioned
+Extract the following information and return ONLY a valid JSON object with these exact fields:
 
-Format as bullet points for easy scanning.
-"""
+{{
+  "main_contributions": ["list of 2-4 key contributions or findings"],
+  "topic_relevance": "2-3 sentences explaining how this paper directly relates to '{topic}'",
+  "key_techniques": ["list of 2-4 methods, datasets, frameworks, or approaches mentioned"],
+  "potential_applications": "2-3 sentences describing what this paper could contribute to research on '{topic}' and any leverageable insights",
+  "limitations": ["list of 1-3 limitations or gaps if mentioned, or empty array if none"]
+}}
 
+Be concise and specific. Focus on concrete information from the abstract.
+Return ONLY the JSON object, no other text."""
+
+    def _parse_json_response(self, response_text: str) -> Optional[Dict]:
+        """
+        Parse JSON from LLM response text.
+        
+        Handles common issues like markdown code blocks, extra text, etc.
+        """
+        try:
+            # Remove markdown code blocks if present
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0]
+            
+            # Find JSON object using regex
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                json_str = json_match.group(0)
+                data = json.loads(json_str)
+                
+                # Validate required fields
+                required_fields = ["main_contributions", "topic_relevance", "key_techniques", "potential_applications"]
+                if all(field in data for field in required_fields):
+                    return data
+                else:
+                    logger.warning(f"JSON missing required fields. Got: {list(data.keys())}")
+                    return None
+            else:
+                logger.warning("No JSON object found in response")
+                return None
+                
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing response: {e}")
+            return None
+    
+    def _format_structured_summary(self, summary_data: Dict, metadata: Dict) -> str:
+        """Format structured summary data as readable markdown."""
+        authors = ", ".join(metadata.get("authors", ["Unknown"]))
+        year = metadata.get("year", "n.d.")
+        venue = metadata.get("venue", "")
+
+        formatted = f"**{metadata.get('title', '')}**\n\n"
+        formatted += f"*{authors} ({year})*"
+
+        if venue:
+            formatted += f" - *{venue}*"
+
+        formatted += "\n\n"
+        
+        # Main contributions
+        if summary_data.get("main_contributions"):
+            formatted += "**Key Contributions:**\n"
+            for contrib in summary_data["main_contributions"]:
+                formatted += f"- {contrib}\n"
+            formatted += "\n"
+        
+        # Topic relevance
+        if summary_data.get("topic_relevance"):
+            formatted += "**Relevance to Topic:**\n"
+            formatted += f"{summary_data['topic_relevance']}\n\n"
+        
+        # Techniques and methods
+        if summary_data.get("key_techniques"):
+            formatted += "**Key Techniques/Methods:**\n"
+            for technique in summary_data["key_techniques"]:
+                formatted += f"- {technique}\n"
+            formatted += "\n"
+        
+        # Potential applications
+        if summary_data.get("potential_applications"):
+            formatted += "**Potential Applications:**\n"
+            formatted += f"{summary_data['potential_applications']}\n\n"
+        
+        # Limitations
+        limitations = summary_data.get("limitations")
+        if limitations and len(limitations) > 0:
+            formatted += "**Limitations:**\n"
+            for limitation in limitations:
+                formatted += f"- {limitation}\n"
+            formatted += "\n"
+
+        return formatted
+    
     def _format_summary(self, summary: str, metadata: Dict) -> str:
         """Format summary as markdown."""
         authors = ", ".join(metadata.get("authors", ["Unknown"]))
