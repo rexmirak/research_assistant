@@ -1,5 +1,10 @@
 # Research Assistant
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://badge.fury.io/py/research-assistant-llm.svg)](https://badge.fury.io/py/research-assistant-llm)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 An intelligent pipeline for processing research papers using LLMs (Ollama or Gemini) with **dynamic LLM-driven category generation**, accurate PDF parsing, metadata extraction, multi-category relevance scoring, deduplication, and automated summarization.
 
 ## Features
@@ -61,7 +66,7 @@ research_assistant/
 ├── cli.py                  # Main CLI entry point (8-pass pipeline)
 ├── config.py               # Configuration and settings
 ├── core/
-│   ├── taxonomy.py         # 🆕 LLM-based category generation from topic
+│   ├── taxonomy.py         # LLM-based category generation from topic
 │   ├── inventory.py        # Directory traversal and PDF discovery
 │   ├── parser.py           # PDF text extraction (PyMuPDF + OCR)
 │   ├── metadata.py         # LLM metadata extraction + multi-category scoring
@@ -69,7 +74,7 @@ research_assistant/
 │   ├── embeddings.py       # Ollama embedding generation
 │   ├── summarizer.py       # Topic-focused summary generation
 │   ├── mover.py            # File moving with dynamic folder creation
-│   ├── manifest.py         # Simplified category manifest tracking
+│   ├── manifest.py         # Category manifest tracking
 │   └── outputs.py          # JSONL, CSV, and Markdown generation
 ├── utils/
 │   ├── cache_manager.py    # SQLite-based caching
@@ -365,18 +370,18 @@ Options:
 
 ```
 outputs/
-├── categories.json          # 🆕 LLM-generated taxonomy with definitions
+├── categories.json          # LLM-generated taxonomy with definitions
 ├── index.jsonl              # Full machine-readable index
 ├── index.csv                # Spreadsheet with all metadata
 ├── summaries/
-│   ├── attack_vectors.md    # 🆕 Dynamic category names
+│   ├── attack_vectors.md    # Dynamic category names
 │   ├── defense_mechanisms.md
 │   ├── quarantined.md
 │   └── ...
 ├── logs/
 │   └── pipeline_YYYYMMDD_HHMMSS.log  # Detailed execution log
 └── manifests/
-    ├── attack_vectors.manifest.json  # 🆕 Dynamic categories
+    ├── attack_vectors.manifest.json  # Dynamic categories
     ├── defense_mechanisms.manifest.json
     ├── quarantined.manifest.json
     ├── repeated.manifest.json
@@ -385,7 +390,6 @@ outputs/
 
 ## Index Fields (JSONL/CSV)
 
-**New fields**:
 - `paper_id`: Unique identifier (content hash)
 - `title`, `authors`, `year`, `venue`, `doi`, `bibtex`
 - `category`: Final category (best-fit from LLM scoring)
@@ -397,11 +401,6 @@ outputs/
 - `path`: Current file path
 - `summary_file`: Link to markdown summary
 - `analyzed`: Boolean (true when processing complete)
-
-**Removed fields** (from old system):
-- `original_category` - No longer tracked (papers start in flat directory)
-- `status` - Replaced by explicit category placement
-- `include` - Replaced by topic_relevance threshold
 
 ## Advanced Usage
 
