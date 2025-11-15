@@ -9,6 +9,7 @@ setup(
     author="Research Assistant Team",
     python_requires=">=3.10",
     packages=find_packages(),
+    py_modules=["cli", "config", "check_install"],
     install_requires=[
         "click>=8.1.0",
         "pydantic>=2.0.0",

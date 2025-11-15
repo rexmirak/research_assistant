@@ -15,7 +15,8 @@ An intelligent pipeline for processing research papers using LLMs (Ollama or Gem
 - **📝 Topic-Focused Summaries**: Per-paper summaries with "how this helps your research"
 - **💾 Resumable**: SQLite cache for embeddings and OCR outputs, index-based resume logic
 - **📤 Multiple Outputs**: JSONL master index + CSV spreadsheet + Markdown summaries per category
-- **✅ Comprehensive Testing**: 100+ unit and integration tests with 41%+ coverage
+- **⏱️ Rate Limiting**: Smart Gemini API rate limiting (10 RPM, 500 RPD) with warnings and interactive prompts
+- **✅ Comprehensive Testing**: 220+ unit and integration tests with 77% coverage
 
 ## Pipeline Flow (8 Passes)
 
@@ -82,7 +83,7 @@ research_assistant/
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.12+**
 - **LLM Provider** (choose one or both):
   - **Ollama** (local, free) with models:
     - `deepseek-r1:8b` (metadata extraction & classification)
@@ -101,8 +102,8 @@ cd research_assistant
 python3 -m venv venv
 source venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install the package with dependencies
+pip install -e .
 
 # Option 1: Local Ollama (recommended for privacy/offline)
 ollama pull deepseek-r1:8b
@@ -116,40 +117,44 @@ echo "GEMINI_API_KEY=your_api_key_here" > .env
 ## Quick Start
 
 ```bash
+# View help
+research-assistant --help
+research-assistant process --help
+
 # Basic usage with Gemini (recommended)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Prompt Injection Attacks in Large Language Models" \
   --llm-provider gemini \
   --workers 2
 
 # With Ollama (local, requires models installed)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
   --llm-provider ollama \
   --workers 2
 
 # Custom topic relevance threshold (default: 5/10)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
   --min-topic-relevance 7
 
 # Resume from interrupted run (skips analyzed papers)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
   --resume
 
 # Force regenerate categories (ignore cached taxonomy)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
   --force-regenerate-categories
 
 # Dry-run (no file moves)
-python cli.py process \
+research-assistant process \
   --root-dir /path/to/papers \
   --topic "Your research topic" \
   --dry-run
@@ -185,6 +190,17 @@ gemini:
   api_key: null  # Set via GEMINI_API_KEY environment variable
   temperature: 0.1
 
+# Rate limiting (Gemini API)
+rate_limit:
+  enabled: true
+  rpm_limit: 10   # Requests per minute (Gemini free tier)
+  rpd_limit: 500  # Requests per day (Gemini free tier)
+  # Warnings at 50% (250 RPD) and 75% (375 RPD)
+  # Interactive prompt at daily limit with options:
+  #   1. Pause and resume tomorrow
+  #   2. Switch to Ollama (local)
+  #   3. Continue anyway (risky)
+
 # Metadata enrichment
 crossref:
   enabled: true
@@ -200,6 +216,37 @@ move:
 processing:
   workers: 2  # Parallel workers (recommend 2 for API rate limits)
   batch_size: 32
+```
+
+## Rate Limiting (Gemini API)
+
+**Automatic rate limiting** prevents API failures and quota exhaustion:
+
+- **RPM Tracking**: Enforces 10 requests per minute (Gemini free tier)
+  - Automatically adds delays between requests to stay under limit
+  - Thread-safe implementation for parallel workers
+
+- **RPD Tracking**: Monitors 500 requests per day limit
+  - Warning at 50% usage (250 requests)
+  - Warning at 75% usage (375 requests)
+  - Interactive prompt at limit with options:
+    1. **Pause**: Stop processing, resume tomorrow (preserves progress)
+    2. **Switch to Ollama**: Continue with local LLM (no API costs)
+    3. **Continue anyway**: Risk API errors (not recommended)
+
+- **Persistent State**: Tracks usage across runs in `cache/rate_limit_state.json`
+- **Disable**: Set `rate_limit.enabled: false` in config to disable
+
+**Example output:**
+```
+⚠️  WARNING: 75% of daily Gemini quota used (375/500 requests)
+Consider switching to Ollama to preserve remaining quota.
+
+🛑 Daily Gemini API limit reached (500/500 requests)
+Options:
+  1. Pause processing and resume tomorrow
+  2. Switch to Ollama (local, no API costs)
+  3. Continue anyway (may fail)
 ```
 
 ## Dynamic Category Generation
@@ -303,13 +350,13 @@ outputs/
 ### Custom topic relevance threshold
 ```bash
 # Stricter filtering (only highly relevant papers)
-python cli.py process \
+research-assistant process \
   --root-dir ./papers \
   --topic "..." \
   --min-topic-relevance 7
 
 # More permissive (include more papers)
-python cli.py process \
+research-assistant process \
   --root-dir ./papers \
   --topic "..." \
   --min-topic-relevance 3
@@ -318,10 +365,10 @@ python cli.py process \
 ### Working with cached categories
 ```bash
 # Use cached taxonomy (fast)
-python cli.py process --root-dir ./papers --topic "..." --resume
+research-assistant process --root-dir ./papers --topic "..." --resume
 
 # Force regenerate taxonomy (if topic changed)
-python cli.py process \
+research-assistant process \
   --root-dir ./papers \
   --topic "..." \
   --force-regenerate-categories
@@ -329,14 +376,14 @@ python cli.py process \
 
 ### Parallel processing
 ```bash
-# More workers (caution: may hit API rate limits)
-python cli.py process \
+# More workers (caution: rate limiter adds delays)
+research-assistant process \
   --root-dir ./papers \
   --topic "..." \
   --workers 4
 
-# Recommended for Gemini free tier (15 RPM limit)
-python cli.py process \
+# Recommended for Gemini free tier (rate limiter enforces 10 RPM)
+research-assistant process \
   --root-dir ./papers \
   --topic "..." \
   --workers 2
@@ -364,26 +411,46 @@ brew services restart ollama
 
 ## Performance Tips
 
-- **Parallel processing**: Set `--workers 4` for multiprocessing
+- **Parallel processing**: Set `--workers 2-4` for multiprocessing (rate limiter handles coordination)
+- **Rate limit awareness**: Gemini free tier enforces 10 RPM (automatically managed)
 - **Cache warming**: Run inventory + parsing first, then scoring/summarization
 - **Selective OCR**: Skip OCR for born-digital PDFs (auto-detected)
 - **Batch embeddings**: Automatically batched in groups of 64
+- **Resume capability**: Use `--resume` to skip already-analyzed papers
+
+## Testing & Quality
+
+```bash
+# Run full test suite
+pytest
+
+# Run with coverage
+pytest --cov=core --cov=utils --cov-report=html
+
+# Run specific test file
+pytest tests/test_metadata.py -v
+
+# Type checking
+mypy core/ utils/ --explicit-package-bases --ignore-missing-imports
+
+# Linting
+flake8 core/ utils/ tests/
+
+# Security scanning
+pip-audit --requirement requirements.txt
+bandit -r core/ utils/ -ll
+```
+
+**CI/CD**: GitHub Actions runs all quality checks on Python 3.12 & 3.13
+- ✅ Linting (flake8)
+- ✅ Type checking (mypy)
+- ✅ Security scanning (pip-audit, bandit)
+- ✅ Tests (pytest)
+- ✅ Documentation checks
+- ✅ Build verification
 
 ## License
 
 MIT
 
-# Gemini API support (optional)
-# 1. Get your API key from https://aistudio.google.com/app/apikey
-# 2. Add GEMINI_API_KEY to your .env file (see .env.example)
-
-# Use Gemini as LLM provider
-# python cli.py process \
-#   --root-dir /path/to/papers \
-#   --topic "Your research topic" \
-#   --llm-provider gemini
-
-# LLM provider selection in config.yaml
-# llm_provider: ollama  # or 'gemini'
-# gemini:
-#   api_key: "${GEMINI_API_KEY}"
+````

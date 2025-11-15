@@ -40,7 +40,7 @@ def cli():
     pass
 
 
-@cli.command()
+@cli.command(short_help="Process PDFs through the full analysis pipeline")
 @click.option(
     "--root-dir",
     required=True,
@@ -49,7 +49,10 @@ def cli():
 )
 @click.option("--topic", required=True, type=str, help="Research topic for category generation")
 @click.option(
-    "--output-dir", default="./outputs", type=click.Path(path_type=Path), help="Output directory"
+    "--output-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Output directory (default: ~/Desktop/output_DD_MMM_HH_MM)",
 )
 @click.option(
     "--cache-dir", default="./cache", type=click.Path(path_type=Path), help="Cache directory"
@@ -105,6 +108,13 @@ def process(
         config = Config.from_yaml(config_file)
     else:
         config = Config()
+
+    # Set default output directory to Desktop with timestamp
+    if output_dir is None:
+        desktop = Path.home() / "Desktop"
+        timestamp = datetime.now().strftime("%d_%b_%H_%M")
+        output_dir = desktop / f"output_{timestamp}"
+        logger.info(f"Using default output directory: {output_dir}")
 
     # Override with CLI parameters
     config.root_dir = root_dir

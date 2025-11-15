@@ -327,6 +327,37 @@ def safe_file_move(src: Path, dst: Path) -> bool:
 
 ---
 
+### 7.5. ✅ **Default Output Directory Structure**
+**Priority**: 🔴 HIGH  
+**Status**: ✅ **COMPLETE**  
+**Completed**: November 15, 2025
+
+**Implemented**:
+- ✅ Default output directory: `~/Desktop/output_DD_MMM_HH_MM` (e.g., `output_15_Nov_16_45`)
+- ✅ Timestamp uses run start time (not completion time)
+- ✅ Each run creates a new output folder automatically
+- ✅ User can override with `--output-dir` flag
+- ✅ Desktop location for easy access
+- ✅ Prevents accidental overwriting of previous runs
+- ✅ Clean separation of runs for comparison
+
+**Files Modified**:
+- `cli.py` - Added default output directory logic with timestamp
+
+**Usage**:
+```bash
+# Default: Creates ~/Desktop/output_15_Nov_16_45/
+research-assistant process --root-dir ./papers --topic "Your topic"
+
+# Custom output directory
+research-assistant process \
+  --root-dir ./papers \
+  --topic "Your topic" \
+  --output-dir /path/to/custom/output
+```
+
+---
+
 ## 🟡 MEDIUM Priority (Important but Not Blocking)
 
 ### 8. ⚠️ **Performance Profiling & Optimization**
@@ -657,10 +688,13 @@ python cli.py interactive
 ## 🎯 Immediate Next Steps (Updated)
 
 1. ✅ **Project cleanup** - Organized docs/ and tests/ folders
-2. **Test full pipeline** - Run with 5-10 papers from test_pdfs/
-3. **Fix any bugs** found during testing
-4. **Convert manual tests** to proper pytest tests
-5. **Update README** with new structure
+2. ✅ **CLI help truncation fix** - Added short_help to prevent "..." truncation
+3. ✅ **README update** - Updated all CLI commands, rate limiting docs, test coverage (77%), Python 3.12+
+4. ✅ **Default output structure** - Outputs to ~/Desktop/output_DD_MMM_HH_MM (timestamp-based folders)
+5. ✅ **Verify all process flags work** - All 11 flags documented in --help are functional
+6. **Test full pipeline** - Run with 5-10 papers from test_pdfs/
+7. **Fix any bugs** found during testing
+8. **Convert manual tests** to proper pytest tests
 
 ---
 
