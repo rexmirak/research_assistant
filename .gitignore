@@ -79,3 +79,8 @@ htmlcov/
 # Config (keep example)
 config.yaml
 !config.example.yaml
+
+# Environment variables (CRITICAL - contains API keys)
+.env
+.env.*
+!.env.example
