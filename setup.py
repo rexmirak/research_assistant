@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="research-assistant",
-    version="0.1.2",
+    version="0.1.3",
     description="Intelligent research paper analysis pipeline with local LLMs",
     author="Research Assistant Team",
     python_requires=">=3.10",
