@@ -52,3 +52,4 @@ commitizen>=3.10.0
 
 # Type stubs
 types-requests>=2.31.0
+types-PyYAML>=6.0.0

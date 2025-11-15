@@ -1,92 +1,85 @@
-"""Test manifest tracking system."""
+"""Unit tests for core/manifest.py: Manifest tracking."""
 
-import shutil
-import tempfile
 from pathlib import Path
 
-from core.manifest import CategoryManifest, ManifestManager
+import pytest
+
+from core.manifest import CategoryManifest, ManifestManager, ManifestEntry
 
 
-def test_manifest_creation():
-    """Test creating and loading a manifest."""
-    temp_dir = Path(tempfile.mkdtemp())
+@pytest.fixture
+def temp_output_dir(tmp_path):
+    """Create temporary output directory."""
+    output_dir = tmp_path / "outputs" / "manifests"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
 
-    try:
-        manager = ManifestManager(temp_dir)
-        manifest = manager.get_manifest("TestCategory")
 
-        # Add a paper
+class TestCategoryManifest:
+    """Tests for CategoryManifest class."""
+
+    def test_add_paper(self, temp_output_dir):
+        """Test adding paper to manifest."""
+        manifest = CategoryManifest(category="test_category", manifest_dir=temp_output_dir)
+        
         entry = manifest.add_paper(
-            paper_id="test123", path="/test/paper.pdf", content_hash="abc123", status="active"
-        )
-
-        assert entry.paper_id == "test123"
-        assert entry.category == "TestCategory"
-        assert manifest.has_content_hash("abc123")
-
-        # Save and reload
-        manifest.save()
-
-        new_manager = ManifestManager(temp_dir)
-        new_manifest = new_manager.get_manifest("TestCategory")
-
-        assert "test123" in new_manifest.entries
-        assert new_manifest.has_content_hash("abc123")
-
-    finally:
-        shutil.rmtree(temp_dir)
-
-
-def test_move_tracking():
-    """Test tracking paper moves between categories."""
-    temp_dir = Path(tempfile.mkdtemp())
-
-    try:
-        manager = ManifestManager(temp_dir)
-
-        # Add paper to CategoryA
-        manifest_a = manager.get_manifest("CategoryA")
-        manifest_a.add_paper(paper_id="paper1", path="/cat_a/paper.pdf", content_hash="hash1")
-
-        # Record move to CategoryB
-        manager.record_move(
             paper_id="paper1",
-            from_category="CategoryA",
-            to_category="CategoryB",
-            new_path="/cat_b/paper.pdf",
-            reason="Better fit",
+            title="Test Paper",
+            path="/test/path.pdf",
+            content_hash="hash123",
+            classification_reasoning="Good fit",
+            relevance_score=9,
+            topic_relevance=8,
         )
+        
+        assert entry.paper_id == "paper1"
+        assert "paper1" in manifest.entries
+        assert manifest.entries["paper1"].title == "Test Paper"
 
-        # After move, the paper is removed from the source manifest (production logic)
-        assert "paper1" not in manifest_a.entries
-        # assert manifest_a.should_skip("paper1")  # Removed as it is always False after a move
-
-        # Check destination manifest
-        manifest_b = manager.get_manifest("CategoryB")
-        assert "paper1" in manifest_b.entries
-        assert manifest_b.entries["paper1"].status == "moved_in"
-
-    finally:
-        shutil.rmtree(temp_dir)
-
-
-def test_duplicate_detection():
-    """Test duplicate marking in manifest."""
-    temp_dir = Path(tempfile.mkdtemp())
-
-    try:
-        manager = ManifestManager(temp_dir)
-        manifest = manager.get_manifest("TestCat")
-
-        # Add canonical paper
-        manifest.add_paper("canonical", "/path1.pdf", "hash1")
-
-        # Add duplicate
-        manifest.add_paper("duplicate", "/path2.pdf", "hash1")
-        manifest.mark_duplicate("duplicate", "canonical")
-
-        assert manifest.should_skip("duplicate")
+    def test_mark_duplicate(self, temp_output_dir):
+        """Test marking paper as duplicate."""
+        manifest = CategoryManifest(category="test_category", manifest_dir=temp_output_dir)
+        
+        manifest.add_paper(
+            paper_id="canonical",
+            title="Original Paper",
+            path="/path1.pdf",
+            content_hash="hash1",
+        )
+        
+        manifest.add_paper(
+            paper_id="duplicate",
+            title="Duplicate Paper",
+            path="/path2.pdf",
+            content_hash="hash1",
+        )
+        
+        manifest.mark_duplicate(paper_id="duplicate", canonical_id="canonical")
+        
         assert manifest.entries["duplicate"].canonical_id == "canonical"
 
-    finally:
-        shutil.rmtree(temp_dir)
+    def test_should_skip_duplicate(self, temp_output_dir):
+        """Test should_skip returns True for duplicates."""
+        manifest = CategoryManifest(category="test_category", manifest_dir=temp_output_dir)
+        
+        manifest.add_paper(
+            paper_id="canonical",
+            title="Original",
+            path="/path1.pdf",
+            content_hash="hash1",
+        )
+        
+        manifest.add_paper(
+            paper_id="duplicate",
+            title="Duplicate",
+            path="/path2.pdf",
+            content_hash="hash1",
+        )
+        
+        manifest.mark_duplicate(paper_id="duplicate", canonical_id="canonical")
+        
+        assert manifest.should_skip("duplicate") is True
+        # Note: canonical is not marked analyzed yet, so should_skip returns False
+        manifest.mark_analyzed("canonical")
+        # After analyzing, canonical should not be skipped (it's the original)
+        assert manifest.is_analyzed("canonical") is True

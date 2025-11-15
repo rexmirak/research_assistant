@@ -11,19 +11,19 @@ logger = logging.getLogger(__name__)
 try:
     from utils.rate_limiter import get_rate_limiter
 except ImportError:
-    get_rate_limiter = None
+    get_rate_limiter = None  # type: ignore[assignment]
 
 # Import Ollama and Gemini clients
 try:
     import ollama
 except ImportError:
-    ollama = None
+    ollama = None  # type: ignore[assignment]
 
 try:
     from utils.gemini_client import gemini_generate, gemini_generate_json
 except ImportError:
-    gemini_generate = None
-    gemini_generate_json = None
+    gemini_generate = None  # type: ignore[assignment]
+    gemini_generate_json = None  # type: ignore[assignment]
 
 
 def llm_generate(
@@ -39,15 +39,15 @@ def llm_generate(
     options = options or {}
     
     # Apply rate limiting for Gemini
-    if provider == "gemini" and get_rate_limiter:
+    if provider == "gemini" and get_rate_limiter is not None:
         rate_limiter = get_rate_limiter(cfg)
         rate_limiter.wait_if_needed()
-    
+
     logger.info(
         f"[LLM REQUEST] Provider: {provider}, Model: {model}, Prompt: {prompt[:500]}{'... [truncated]' if len(prompt) > 500 else ''}"
     )
     if provider == "gemini":
-        if not gemini_generate:
+        if gemini_generate is None:
             raise ImportError("Gemini client not available.")
         api_key = getattr(cfg, "gemini", None) and getattr(cfg.gemini, "api_key", None)
         if not api_key:
@@ -56,12 +56,12 @@ def llm_generate(
         temperature = options.get("temperature", getattr(cfg.gemini, "temperature", 0.1))
         schema = options.get("schema")
         try:
-            if schema and gemini_generate_json:
+            if schema and gemini_generate_json is not None:
                 response = gemini_generate_json(
                     prompt,
                     schema=schema,
                     api_key=api_key,
-                    model=gemini_model,
+                    model=str(gemini_model),
                     temperature=temperature,
                 )
                 logger.info(
@@ -70,7 +70,7 @@ def llm_generate(
                 return {"response": response}
             else:
                 response_text = gemini_generate(
-                    prompt, api_key=api_key, model=gemini_model, temperature=temperature
+                    prompt, api_key=api_key, model=str(gemini_model), temperature=temperature
                 )
                 logger.info(
                     f"[LLM RESPONSE] Provider: gemini, Response: {str(response_text)[:500]}{'... [truncated]' if len(str(response_text)) > 500 else ''}"

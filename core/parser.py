@@ -1,7 +1,7 @@
 """PDF text extraction with OCR fallback."""
 
 import logging
-import subprocess
+import subprocess  # nosec B404 - Required for calling pdftotext and ocrmypdf tools
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -137,8 +137,8 @@ class PDFParser:
 
             if not shutil.which("pdftotext"):
                 return ""
-            # Run pdftotext to stdout
-            result = subprocess.run(
+            # Run pdftotext to stdout (trusted tool with validated input)
+            result = subprocess.run(  # nosec B603 B607
                 ["pdftotext", "-layout", str(pdf_path), "-"],
                 capture_output=True,
                 text=True,
@@ -170,7 +170,8 @@ class PDFParser:
 
             # Run ocrmypdf
             logger.info(f"Running OCR on {pdf_path.name}")
-            result = subprocess.run(
+            # ocrmypdf is a trusted OCR tool with validated inputs
+            result = subprocess.run(  # nosec B603 B607
                 [
                     "ocrmypdf",
                     "--language",

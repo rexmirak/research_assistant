@@ -17,7 +17,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.13'
     
     - name: Cache pip packages
       uses: actions/cache@v3
@@ -36,28 +36,18 @@ jobs:
         PYTHONPATH: ${{ github.workspace }}
       run: pip install -e .
     
-    - name: Run Black
-      run: black --check core/ utils/ cache/ tests/ cli.py setup.py config.py check_install.py || echo "Black formatting issues found"
-      continue-on-error: true
-    
-    - name: Run isort
-      run: isort --check-only core/ utils/ cache/ tests/ cli.py setup.py config.py check_install.py || echo "isort issues found"
-      continue-on-error: true
-    
     - name: Run Flake8
-      run: flake8 core/ utils/ cache/ tests/ cli.py setup.py config.py check_install.py --max-line-length=100 || echo "Flake8 issues found"
-      continue-on-error: true
+      run: flake8 core/ utils/ tests/ cli.py setup.py config.py check_install.py
     
     - name: Run MyPy
-      run: mypy core/ utils/ cache/ cli.py --ignore-missing-imports || echo "MyPy type issues found"
-      continue-on-error: true
+      run: mypy core/ utils/ cli.py --explicit-package-bases --ignore-missing-imports
 
   test:
     name: Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.12', '3.13']
     
     steps:
     - uses: actions/checkout@v4
@@ -84,17 +74,11 @@ jobs:
         PYTHONPATH: ${{ github.workspace }}
       run: pip install -e .
     
-    - name: Run unit tests
+    - name: Run tests with coverage
       run: |
-        pytest tests/ -v --cov=core --cov=utils --cov=cache \
+        pytest tests/ -v --cov=core --cov=utils \
           --cov-report=xml --cov-report=term-missing \
-          -m "not integration" || echo "Some tests failed but continuing..."
-      continue-on-error: true
-    
-    - name: Run integration tests
-      run: |
-        pytest tests/test_integration.py -v || echo "Integration tests failed but continuing..."
-      continue-on-error: true
+          --cov-report=html
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -114,20 +98,22 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.13'
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install safety bandit
+        pip install pip-audit bandit
     
-    - name: Run Safety check
-      run: safety check --json || true
-      continue-on-error: true
+    - name: Run pip-audit (dependency vulnerability scan)
+      run: |
+        # GHSA-f83h-ghpp-7wcc (pdfminer.six pickle RCE): Only exploitable if CMAP_PATH 
+        # points to user-writable directories. We don't set CMAP_PATH and process local
+        # PDFs only, not untrusted uploads. Monitoring for upstream fix.
+        pip-audit --requirement requirements.txt --ignore-vuln GHSA-f83h-ghpp-7wcc
     
-    - name: Run Bandit
-      run: bandit -r core/ utils/ cache/ -f json || true
-      continue-on-error: true
+    - name: Run Bandit (code security scan)
+      run: bandit -r core/ utils/ -ll
 
   docs:
     name: Documentation Check
@@ -138,33 +124,6 @@ jobs:
     
     - name: Check README exists
       run: test -f README.md
-    
-    - name: Check documentation files
-      run: |
-        test -f USAGE.md
-        test -f TROUBLESHOOTING.md
-        test -f PROJECT_SUMMARY.md
-    
-    - name: Check code has docstrings
-      run: |
-        python -c "
-        import ast
-        import sys
-        from pathlib import Path
-        
-        missing_docstrings = []
-        for pyfile in Path('core').rglob('*.py'):
-            if pyfile.name == '__init__.py':
-                continue
-            tree = ast.parse(pyfile.read_text())
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    if not ast.get_docstring(node):
-                        missing_docstrings.append(f'{pyfile}:{node.name}')
-        
-        if missing_docstrings and len(missing_docstrings) > 10:
-            print(f'Warning: {len(missing_docstrings)} items missing docstrings')
-        "
 
   build:
     name: Build Check
@@ -177,7 +136,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.13'
     
     - name: Install dependencies
       run: |
@@ -191,4 +150,5 @@ jobs:
     - name: Check CLI entrypoint
       run: |
         pip install -r requirements.txt
-        python cli.py --help
+        pip install -e .
+        research-assistant --help

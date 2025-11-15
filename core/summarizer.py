@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from pydantic import BaseModel
 
 from utils.llm_provider import llm_generate
@@ -24,13 +24,13 @@ class Summarizer:
     """Generate topic-focused summaries of papers."""
 
     def __init__(
-        self, model: str = "deepseek-r1:8b", temperature: float = 0.3, max_summary_length: int = 800
+        self, model: Optional[str] = None, temperature: float = 0.3, max_summary_length: int = 800
     ):
         """
         Initialize summarizer.
 
         Args:
-            model: Ollama model name
+            model: LLM model name (None = use provider default)
             temperature: Sampling temperature
             max_summary_length: Maximum summary length in words
         """
@@ -65,15 +65,11 @@ class Summarizer:
             # Build prompt with schema
             prompt = self._build_summary_prompt(title, abstract, intro, topic, metadata, full_text)
 
-            # Get provider
-            from config import Config
-            cfg = Config()
-            provider = getattr(cfg, "llm_provider", "ollama")
-            
-            # Call LLM with schema support for Gemini
-            options = {"temperature": self.temperature}
-            if provider == "gemini":
-                options["schema"] = PaperSummarySchema
+            # Call LLM with schema in options (provider-agnostic)
+            options = {
+                "temperature": self.temperature,
+                "schema": PaperSummarySchema
+            }
             
             response = llm_generate(
                 prompt=prompt,
@@ -81,19 +77,15 @@ class Summarizer:
                 options=options,
             )
             
-            # Parse structured response
-            if provider == "gemini":
-                # Gemini returns structured data directly
-                summary_data = response["response"]
-                if isinstance(summary_data, dict):
-                    structured_summary = summary_data
-                else:
-                    # Fallback: try to parse as JSON
-                    structured_summary = self._parse_json_response(str(summary_data))
+            # Parse response - check if it's already structured JSON or needs parsing
+            response_data = response["response"]
+            structured_summary: dict[Any, Any] | None = None
+            if isinstance(response_data, dict):
+                # Provider returned structured data (e.g., Gemini with native schema support)
+                structured_summary = response_data
             else:
-                # Ollama returns text - parse JSON
-                response_text = response["response"].strip()
-                structured_summary = self._parse_json_response(response_text)
+                # Provider returned text - parse JSON (e.g., Ollama)
+                structured_summary = self._parse_json_response(str(response_data))
             
             # Validate and format
             if structured_summary:
@@ -161,7 +153,11 @@ Return ONLY the JSON object, no other text."""
                 json_str = json_match.group(0)
                 data = json.loads(json_str)
                 
-                # Validate required fields
+                # Validate it's a dict and has required fields
+                if not isinstance(data, dict):
+                    logger.warning("Parsed JSON is not a dictionary")
+                    return None
+                    
                 required_fields = ["main_contributions", "topic_relevance", "key_techniques", "potential_applications"]
                 if all(field in data for field in required_fields):
                     return data

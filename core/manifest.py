@@ -24,10 +24,10 @@ class ManifestEntry:
         self.topic_relevance: Optional[int] = data.get("topic_relevance")  # Overall topic relevance
         self.analyzed: bool = data.get("analyzed", False)
         self.canonical_id: Optional[str] = data.get("canonical_id")  # For duplicates
-        
+
         # Backward compatibility - maintain old fields if present
         self._legacy_fields = {}
-        for key in ["status", "original_category", "moved_from", "moved_to", "moved_at", "reason", 
+        for key in ["status", "original_category", "moved_from", "moved_to", "moved_at", "reason",
                     "category", "original_path", "current_path"]:
             if key in data:
                 self._legacy_fields[key] = data[key]
@@ -44,11 +44,11 @@ class ManifestEntry:
             "topic_relevance": self.topic_relevance,
             "analyzed": self.analyzed,
         }
-        
+
         # Add canonical_id only if it's a duplicate
         if self.canonical_id:
             result["canonical_id"] = self.canonical_id
-            
+
         return result
 
 
@@ -178,7 +178,6 @@ class CategoryManifest:
         """Mark paper as duplicate of canonical paper."""
         if paper_id in self.entries:
             entry = self.entries[paper_id]
-            entry.status = "duplicate"
             entry.canonical_id = canonical_id
 
     def is_analyzed(self, paper_id: str) -> bool:
@@ -246,12 +245,13 @@ class ManifestManager:
             dest_manifest = self.get_manifest(to_category)
             dest_manifest.add_paper(
                 paper_id=paper_id,
+                title=source_entry.title,
                 path=new_path,
                 content_hash=source_entry.content_hash,
-                status="moved_in",
-                original_category=source_entry.original_category,
+                classification_reasoning=f"Moved from {from_category}: {reason}",
+                relevance_score=source_entry.relevance_score,
+                topic_relevance=source_entry.topic_relevance,
             )
-            dest_manifest.mark_moved_in(paper_id, from_category, new_path, reason)
             dest_manifest.save()
             logger.info(f"Recorded move: {paper_id} from {from_category} to {to_category}")
 
@@ -270,6 +270,7 @@ class ManifestManager:
         all_hashes = {}
         for category, manifest in self.manifests.items():
             for entry in manifest.entries.values():
-                if entry.status not in ["moved_out", "duplicate"]:  # Don't count moved/dup
+                # Skip duplicates (they have canonical_id set)
+                if entry.canonical_id is None:
                     all_hashes[entry.content_hash] = (category, entry.paper_id)
         return all_hashes

@@ -67,12 +67,19 @@ class TaxonomyGenerator:
                     cached_data = json.load(f)
                     if cached_data.get("topic") == topic:
                         categories = cached_data.get("categories", {})
-                        logger.info(
-                            f"Using cached taxonomy with {len(categories)} categories"
-                        )
-                        # Also save to output dir
-                        self._save_taxonomy(output_file, topic, categories)
-                        return categories
+                        # Validate it's a dict with string keys and values
+                        if isinstance(categories, dict) and all(
+                            isinstance(k, str) and isinstance(v, str)
+                            for k, v in categories.items()
+                        ):
+                            logger.info(
+                                f"Using cached taxonomy with {len(categories)} categories"
+                            )
+                            # Also save to output dir
+                            self._save_taxonomy(output_file, topic, categories)
+                            return categories
+                        else:
+                            logger.warning("Cached categories have invalid format, regenerating")
                     else:
                         logger.info(
                             f"Cached topic '{cached_data.get('topic')}' doesn't match '{topic}', regenerating"
@@ -189,7 +196,7 @@ Return ONLY the JSON object, no other text."""
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Response was: {response[:500]}...")
+            logger.error(f"Response was: {response_text[:500]}...")
             raise
         except Exception as e:
             logger.error(f"Failed to generate taxonomy with LLM: {e}")
@@ -240,7 +247,16 @@ Return ONLY the JSON object, no other text."""
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-                return data.get("categories", {})
+                categories = data.get("categories", {})
+                # Validate it's a dict with string keys and values
+                if isinstance(categories, dict) and all(
+                    isinstance(k, str) and isinstance(v, str)
+                    for k, v in categories.items()
+                ):
+                    return categories
+                else:
+                    logger.warning(f"Invalid categories format in {path}")
+                    return None
         except Exception as e:
             logger.error(f"Failed to load categories from {path}: {e}")
             return None

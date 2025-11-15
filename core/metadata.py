@@ -29,9 +29,10 @@ class MultiCategoryScoreSchema(BaseModel):
 
 import json as _json
 import logging
-from core.category_validator import CategoryValidator
 import re
 from pathlib import Path
+
+from core.category_validator import CategoryValidator
 from typing import Any, Dict, Optional
 
 import fitz  # PyMuPDF (for first page text)
@@ -104,7 +105,7 @@ class MetadataExtractor:
             f"PAPER TITLE:\n{title}\n\n"
             f"PAPER CONTENT (Abstract + Introduction):\n{abstract or 'Not available'}\n\n"
             + (f"AVAILABLE CATEGORIES:\n{categories_str}\n\n" if categories_str else "")
-            + "STEP-BY-STEP REASONING PROCESS:\n\n"
+            + "STEP-BY-STEP REASONING PROCESS:\n\n"  # nosec B608 - This is an LLM prompt, not SQL
             "Step 1 - UNDERSTAND THE PAPER:\n"
             "- What is the main focus/contribution of this paper?\n"
             "- What specific problem does it address?\n"
@@ -301,7 +302,11 @@ IMPORTANT:
             json_match = re.search(r"{[\s\S]*}", text)
             if json_match:
                 json_str = json_match.group(0)
-                result = _json.loads(json_str)
+                parsed_result = _json.loads(json_str)
+                if not isinstance(parsed_result, dict):
+                    logger.warning("Parsed JSON is not a dictionary")
+                    return self._fallback_classification(categories)
+                result: Dict[str, Any] = parsed_result
             else:
                 logger.warning(f"No JSON in classification response: {text[:200]}")
                 return self._fallback_classification(categories)

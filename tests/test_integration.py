@@ -90,7 +90,10 @@ def test_manifest_with_inventory(temp_workspace, output_dir):
     for doc in documents:
         manifest = manifest_manager.get_manifest(doc.category)
         manifest.add_paper(
-            paper_id=doc.file_hash[:12], path=str(doc.file_path), content_hash=doc.file_hash
+            paper_id=doc.file_hash[:12],
+            title=doc.file_name,
+            path=str(doc.file_path),
+            content_hash=doc.file_hash
         )
 
     manifest_manager.save_all()
@@ -118,7 +121,12 @@ def test_move_tracking_integration(temp_workspace, output_dir):
     paper_id = doc.file_hash[:12]
 
     manifest_a = manifest_manager.get_manifest("CategoryA")
-    manifest_a.add_paper(paper_id=paper_id, path=str(doc.file_path), content_hash=doc.file_hash)
+    manifest_a.add_paper(
+        paper_id=paper_id,
+        title=doc.file_name,
+        path=str(doc.file_path),
+        content_hash=doc.file_hash
+    )
     manifest_a.mark_analyzed(paper_id)
 
     # Record move to CategoryB
@@ -137,7 +145,8 @@ def test_move_tracking_integration(temp_workspace, output_dir):
     # Verify destination has entry
     manifest_b = manifest_manager.get_manifest("CategoryB")
     assert paper_id in manifest_b.entries
-    assert manifest_b.entries[paper_id].status == "moved_in"
+    assert manifest_b.entries[paper_id].title == doc.file_name
+    assert "Moved from CategoryA" in manifest_b.entries[paper_id].classification_reasoning
 
 
 def test_deduplication_integration(temp_workspace):
@@ -208,7 +217,12 @@ def test_end_to_end_workflow(temp_workspace, cache_dir, output_dir):
 
         # Add to manifest
         manifest = manifest_manager.get_manifest(doc.category)
-        manifest.add_paper(paper_id=paper_id, path=str(doc.file_path), content_hash=doc.file_hash)
+        manifest.add_paper(
+            paper_id=paper_id,
+            title=doc.file_name,
+            path=str(doc.file_path),
+            content_hash=doc.file_hash
+        )
 
         # Mock cache data
         cache.set_text(paper_id, f"Text content for {doc.file_name}", doc.file_hash)
@@ -274,7 +288,12 @@ def test_full_pipeline_with_mocks(temp_workspace, cache_dir, output_dir):
 
         # Add to manifest
         manifest = manifest_manager.get_manifest(doc.category)
-        manifest.add_paper(paper_id, str(doc.file_path), doc.file_hash)
+        manifest.add_paper(
+            paper_id=paper_id,
+            title=doc.file_name,
+            path=str(doc.file_path),
+            content_hash=doc.file_hash
+        )
         manifest.mark_analyzed(paper_id)
 
         processed_papers[paper_id] = {

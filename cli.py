@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from config import Config
 from core.dedup import DedupManager
-from core.inventory import InventoryManager
+from core.inventory import InventoryManager, PDFDocument
 from core.manifest import ManifestManager
 from core.metadata import MetadataExtractor
 from core.mover import FileMover
@@ -224,10 +224,10 @@ def process(
     logger.info(f"Discovered {len(documents)} PDF files")
 
     # Detect and move file-level duplicates (same file_hash)
-    hash_to_docs = {}
-    duplicates = []
-    unique_documents = []
-    
+    hash_to_docs: dict[str, PDFDocument] = {}
+    duplicates: list[tuple[PDFDocument, PDFDocument]] = []
+    unique_documents: list[PDFDocument] = []
+
     for doc in documents:
         if doc.file_hash in hash_to_docs:
             # Duplicate found
@@ -496,14 +496,14 @@ def process(
 
     # Move duplicates
     duplicate_count = 0
-    for canonical, duplicates in near_dups.items():
-        for dup_id in duplicates:
+    for canonical_id, dup_ids in near_dups.items():
+        for dup_id in dup_ids:
             if dup_id in paper_data:
                 dup_data = paper_data[dup_id]
                 logger.info(
-                    f"[DUPLICATE] {dup_data['doc'].file_name} is duplicate of {canonical}"
+                    f"[DUPLICATE] {dup_data['doc'].file_name} is duplicate of {canonical_id}"
                 )
-                
+
                 # Move to repeated folder
                 repeated_dir = root_dir / "repeated"
                 repeated_dir.mkdir(parents=True, exist_ok=True)
@@ -514,7 +514,7 @@ def process(
                         import shutil
                         shutil.move(str(dup_data["doc"].file_path), str(new_path))
                         dup_data["doc"].file_path = new_path
-                        dup_data["canonical_id"] = canonical
+                        dup_data["canonical_id"] = canonical_id
                         duplicate_count += 1
                         logger.info(f"[MOVED] {dup_data['doc'].file_name} to repeated/")
                     except Exception as e:
@@ -571,7 +571,7 @@ def process(
                 paper_id=paper_id,
                 title=doc.file_name,
                 path=str(need_human_dir / doc.file_path.name),
-                content_hash=text_hash,
+                content_hash=text_hash or "",
                 classification_reasoning="Unreadable - no metadata extracted",
                 relevance_score=None,
                 topic_relevance=None,
@@ -589,7 +589,7 @@ def process(
     logger.info("[PASS 7] SUMMARIZATION - Generating LLM summaries for papers")
     logger.info("=" * 100)
 
-    category_summaries = {}
+    category_summaries: dict[str, list[dict[str, Any]]] = {}
 
     def summarize_paper_task(paper_id, data):
         """Summarize a single paper."""
@@ -725,8 +725,8 @@ def process(
     logger.info("=" * 100)
     logger.info(f"Total papers processed: {len(paper_data)}")
     logger.info(f"Papers by category:")
-    
-    category_counts = {}
+
+    category_counts: dict[str, int] = {}
     for data in paper_data.values():
         topic_rel = data["topic_relevance"]
         best_cat = data["best_category"]

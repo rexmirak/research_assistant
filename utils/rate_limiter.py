@@ -41,10 +41,10 @@ class RateLimiter:
         
         # Thread safety
         self.lock = Lock()
-        
+
         # RPM tracking
-        self.request_times = []
-        
+        self.request_times: list[float] = []
+
         # RPD tracking
         self.daily_count = 0
         self.current_date = datetime.now().date()

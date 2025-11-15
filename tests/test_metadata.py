@@ -33,6 +33,7 @@ def test_extract_with_llm_returns_metadata(extractor):
         patch("core.metadata.llm_generate", return_value=fake_llm_response_ollama),
     ):
         mock_doc = MagicMock()
+        mock_doc.page_count = 10  # Fix: set page_count as integer
         mock_page = MagicMock()
         mock_page.get_text.return_value = "First page text"
         mock_doc.load_page.return_value = mock_page
@@ -69,10 +70,11 @@ def test_extract_with_llm_gemini_provider(extractor):
 
     with (
         patch("fitz.open") as mock_fitz_open,
-        patch("config.Config", return_value=mock_config),  # Patch Config class itself
+        patch("config.Config", return_value=mock_config),
         patch("core.metadata.llm_generate", return_value=fake_llm_response_gemini),
     ):
         mock_doc = MagicMock()
+        mock_doc.page_count = 10  # Fix: set page_count as integer
         mock_page = MagicMock()
         mock_page.get_text.return_value = "First page text"
         mock_doc.load_page.return_value = mock_page
@@ -91,15 +93,20 @@ def test_extract_with_llm_gemini_provider(extractor):
 def test_llm_categorize_and_score_returns_expected_keys(extractor):
     """Test LLM categorization and scoring with mocked responses."""
     fake_llm_response = {
-        "response": {
-            "category": "attack_vectors",
-            "relevance_score": 8,
-            "include": True,
-            "reason": "Highly relevant to AI security",
-        }
+        "response": '{"category": "attack_vectors", "relevance_score": 8, "include": true, "reason": "Highly relevant to AI security"}'
     }
 
-    with patch("utils.llm_provider.llm_generate", return_value=fake_llm_response):
+    from config import Config
+
+    # Ensure the test uses the Ollama provider so the mocked string response
+    # matches the code path (Ollama returns a string JSON in 'response').
+    mock_config = Config()
+    mock_config.llm_provider = "ollama"
+
+    with (
+        patch("config.Config", return_value=mock_config),
+        patch("core.metadata.llm_generate", return_value=fake_llm_response),
+    ):
         result = extractor._llm_categorize_and_score(
             title="Test Paper",
             abstract="Test abstract",

@@ -74,10 +74,11 @@ def test_process_single_doc_pipeline(pipeline_components, tmp_path):
     manifest = manifest_manager.get_manifest(doc.category)
     manifest.add_paper(
         paper_id=paper_id,
+        title=metadata.get("title", ""),
         path=str(doc.file_path),
         content_hash=text_hash,
-        status="active",
-        original_category=doc.category,
+        classification_reasoning=metadata.get("reason", ""),
+        relevance_score=metadata.get("relevance_score"),
     )
     # Output
     record = {
@@ -194,12 +195,30 @@ def test_metadata_extractor_with_real_pdf(test_pdfs_root):
     pdf_path = documents[0].file_path
     category = documents[0].category
 
-    # Mock LLM response
+    # Mock LLM response (Ollama format - JSON string)
     fake_metadata = {
         "response": '{"title": "Test Paper", "authors": ["Author"], "abstract": "Abstract", "year": "2023", "venue": null}'
     }
 
-    with patch("core.metadata.llm_generate", return_value=fake_metadata):
+    # Mock config to use Ollama provider
+    from config import Config
+    mock_config = Config()
+    mock_config.llm_provider = "ollama"
+    mock_config.ollama.summarize_model = "deepseek-r1:8b"
+
+    with (
+        patch("core.metadata.llm_generate", return_value=fake_metadata),
+        patch("config.Config", return_value=mock_config),
+        patch("fitz.open") as mock_fitz,
+    ):
+        # Mock PDF document
+        mock_doc = MagicMock()
+        mock_doc.page_count = 10
+        mock_page = MagicMock()
+        mock_page.get_text.return_value = "Test content from PDF"
+        mock_doc.load_page.return_value = mock_page
+        mock_fitz.return_value = mock_doc
+        
         extractor = MetadataExtractor(use_crossref=False)
         result = extractor._extract_with_llm(pdf_path)
 
@@ -248,8 +267,8 @@ def test_end_to_end_pipeline_dry_run(runner, test_pdfs_root, tmp_path):
                 "--dry-run",
                 "--workers",
                 "1",
-                "--relevance-threshold",
-                "7.0",
+                "--min-topic-relevance",
+                "7",
             ],
         )
 
@@ -401,8 +420,8 @@ def test_pipeline_respects_relevance_threshold(runner, test_pdfs_root, tmp_path)
                 "--dry-run",
                 "--workers",
                 "1",
-                "--relevance-threshold",
-                "7.0",
+                "--min-topic-relevance",
+                "7",
             ],
         )
 

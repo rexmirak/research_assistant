@@ -143,7 +143,7 @@ class CacheManager:
         result = cursor.fetchone()
         conn.close()
 
-        return result if result else None  # type: ignore[no-any-return]
+        return result if result else None
 
     def set_text(self, paper_id: str, text: str, text_hash: str):
         """Cache text extract."""
@@ -196,8 +196,11 @@ class CacheManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        for table in ["embeddings", "metadata", "text_extracts", "processing_state"]:
-            cursor.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff.isoformat(),))
+        # Fixed table names (not user input) - safe from SQL injection
+        tables = ["embeddings", "metadata", "text_extracts", "processing_state"]
+        for table in tables:
+            # Table names cannot be parameterized in SQLite, but these are hardcoded constants
+            cursor.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff.isoformat(),))  # nosec B608
 
         conn.commit()
         conn.close()
