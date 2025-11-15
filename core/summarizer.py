@@ -95,8 +95,9 @@ Provide a concise analysis (max {self.max_summary_length} words) covering:
 1. Main contributions and key findings from the abstract
 2. Direct relevance to the research topic
 3. Specific connections or insights that relate to the topic
-4. How this work could inform research on the topic
-5. Potential gaps or limitations mentioned
+4. What this paper could contribute to research on "{topic}"
+5. Leveragable information: techniques, methodologies, datasets, or findings that could be applied to advance research on the topic
+6. Potential gaps or limitations mentioned
 
 Format as bullet points for easy scanning.
 """

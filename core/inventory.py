@@ -45,7 +45,7 @@ class InventoryManager:
             ignore_patterns: Patterns to ignore (e.g., ['.*', '_*'])
         """
         self.root_dir = root_dir
-        self.ignore_patterns = ignore_patterns or [".*", "__*", "repeated", "quarantined"]
+        self.ignore_patterns = ignore_patterns or [".*", "__*", "repeated", "quarantined", "duplicates"]
         self.documents: List[PDFDocument] = []
         self.all_categories: List[str] = []
 

@@ -29,6 +29,7 @@ class MultiCategoryScoreSchema(BaseModel):
 
 import json as _json
 import logging
+from core.category_validator import CategoryValidator
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -58,6 +59,7 @@ class MetadataExtractor:
         """
         self.use_crossref = use_crossref
         self.crossref_email = crossref_email
+        self.validator = CategoryValidator()
 
     def extract(
         self,
@@ -284,11 +286,8 @@ IMPORTANT:
         provider = getattr(cfg, "llm_provider", "ollama")
         options: dict = {"temperature": 0.1}
 
-        if provider == "gemini":
-            options["schema"] = MultiCategoryScoreSchema
-            model = None
-        else:
-            model = "deepseek-r1:8b"
+        # Don't use schema for this call - dynamic category names don't work with Gemini's schema validation
+        model = None if provider == "gemini" else "deepseek-r1:8b"
 
         try:
             response = llm_generate(
@@ -297,30 +296,54 @@ IMPORTANT:
                 options=options,
             )
 
-            if provider == "gemini":
-                result = dict(response["response"])
+            # Parse JSON from response (both providers)
+            text = response["response"].strip()
+            json_match = re.search(r"{[\s\S]*}", text)
+            if json_match:
+                json_str = json_match.group(0)
+                result = _json.loads(json_str)
             else:
-                text = response["response"].strip()
-                json_match = re.search(r"{[\s\S]*}", text)
-                if json_match:
-                    json_str = json_match.group(0)
-                    result = _json.loads(json_str)
-                else:
-                    logger.warning(f"No JSON in classification response: {text[:200]}")
-                    return self._fallback_classification(categories)
+                logger.warning(f"No JSON in classification response: {text[:200]}")
+                return self._fallback_classification(categories)
 
             # Validate and add best_category
             if not isinstance(result.get("category_scores"), dict):
                 logger.warning("Invalid category_scores format")
                 return self._fallback_classification(categories)
 
-            # Find best category
+            # Validate and match LLM-returned category names to existing categories
             category_scores = result["category_scores"]
-            if category_scores:
-                best_category = max(category_scores.items(), key=lambda x: x[1])[0]
+            validated_scores = {}
+            existing_category_names = list(categories.keys())
+
+            for llm_category, score in category_scores.items():
+                # Try to match to existing categories
+                matched = self.validator.match_to_existing(
+                    llm_category, existing_category_names
+                )
+                if matched:
+                    validated_scores[matched] = score
+                    if matched != llm_category:
+                        logger.info(
+                            f"Matched LLM category '{llm_category}' to '{matched}'"
+                        )
+                else:
+                    # LLM returned unknown category - sanitize and log warning
+                    sanitized = self.validator.sanitize_name(llm_category)
+                    logger.warning(
+                        f"LLM returned unknown category '{llm_category}' (sanitized: '{sanitized}') - not in taxonomy"
+                    )
+                    # Still include it with low score so we don't lose data
+                    validated_scores[sanitized] = score
+
+            # Find best category (from validated scores)
+            if validated_scores:
+                best_category = max(validated_scores.items(), key=lambda x: x[1])[0]
                 result["best_category"] = best_category
+                result["category_scores"] = validated_scores
             else:
                 result["best_category"] = None
+                result["category_scores"] = {}
 
             return result
 

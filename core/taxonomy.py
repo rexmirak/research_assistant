@@ -3,9 +3,10 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from utils.llm_provider import llm_generate
+from core.category_validator import CategoryValidator
 
 logger = logging.getLogger(__name__)
 
@@ -13,18 +14,29 @@ logger = logging.getLogger(__name__)
 class TaxonomyGenerator:
     """Generates research paper categories using LLM based on topic."""
 
-    def __init__(self, cache_dir: Path, output_dir: Path):
+    def __init__(
+        self,
+        cache_dir: Path,
+        output_dir: Path,
+        min_categories: int = 3,
+        max_categories: int = 25,
+    ):
         """
         Initialize taxonomy generator.
 
         Args:
             cache_dir: Directory to cache generated taxonomies
             output_dir: Directory to save output taxonomies
+            min_categories: Minimum number of categories (default: 3)
+            max_categories: Maximum number of categories (default: 25)
         """
         self.cache_dir = cache_dir
         self.output_dir = output_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.validator = CategoryValidator(
+            min_categories=min_categories, max_categories=max_categories
+        )
 
     def generate_categories(
         self, topic: str, force_regenerate: bool = False
@@ -144,22 +156,36 @@ Return ONLY the JSON object, no other text."""
             response_text = response_text.strip()
 
             # Parse JSON
-            categories = json.loads(response_text)
+            raw_categories = json.loads(response_text)
 
-            if not isinstance(categories, dict):
+            if not isinstance(raw_categories, dict):
                 raise ValueError("LLM response is not a dictionary")
 
-            if len(categories) == 0:
+            if len(raw_categories) == 0:
                 raise ValueError("LLM generated zero categories")
 
-            # Validate category names (should be snake_case)
-            for name in categories.keys():
-                if not name.replace("_", "").isalnum():
-                    logger.warning(
-                        f"Category name '{name}' contains special characters, may cause issues"
-                    )
+            # Validate and sanitize categories
+            logger.info(
+                f"Validating {len(raw_categories)} LLM-generated categories..."
+            )
+            sanitized, warnings, errors = self.validator.validate_and_sanitize(
+                raw_categories
+            )
 
-            return categories
+            # Log warnings
+            for warning in warnings:
+                logger.warning(f"Category validation: {warning}")
+
+            # Check for critical errors
+            if errors:
+                error_msg = "; ".join(errors)
+                logger.error(f"Category validation failed: {error_msg}")
+                raise ValueError(f"Category validation failed: {error_msg}")
+
+            logger.info(
+                f"Validated taxonomy: {len(sanitized)} categories after sanitization"
+            )
+            return sanitized
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")

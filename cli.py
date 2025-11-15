@@ -23,7 +23,7 @@ from core.parser import PDFParser
 from core.summarizer import Summarizer
 from core.taxonomy import TaxonomyGenerator
 from utils.cache_manager import CacheManager
-from utils.hash import compute_file_hash
+from utils.hash import file_hash
 
 # Setup logging
 logging.basicConfig(
@@ -166,7 +166,7 @@ def process(
         logger.info("Cache purged successfully")
 
     # Initialize components
-    cache_manager = CacheManager(cache_dir / "cache.db")
+    cache_manager = CacheManager(cache_dir)
     metadata_extractor = MetadataExtractor(
         use_crossref=config.crossref.enabled,
         crossref_email=config.crossref.email,
@@ -174,7 +174,6 @@ def process(
     pdf_parser = PDFParser()
     dedup_manager = DedupManager(
         similarity_threshold=config.dedup.similarity_threshold,
-        use_minhash=config.dedup.use_minhash,
         num_perm=config.dedup.num_perm,
     )
     manifest_manager = ManifestManager(output_dir / "manifests")
@@ -216,13 +215,47 @@ def process(
     logger.info("=" * 100)
 
     inventory_manager = InventoryManager(root_dir)
-    documents = inventory_manager.discover_pdfs()
+    documents = inventory_manager.scan()
 
     if not documents:
         logger.error("No PDF files found in root directory")
         sys.exit(1)
 
     logger.info(f"Discovered {len(documents)} PDF files")
+
+    # Detect and move file-level duplicates (same file_hash)
+    hash_to_docs = {}
+    duplicates = []
+    unique_documents = []
+    
+    for doc in documents:
+        if doc.file_hash in hash_to_docs:
+            # Duplicate found
+            canonical = hash_to_docs[doc.file_hash]
+            duplicates.append((doc, canonical))
+            logger.info(f"[DUPLICATE] {doc.file_name} is identical to {canonical.file_name}")
+        else:
+            # First occurrence - this is the canonical version
+            hash_to_docs[doc.file_hash] = doc
+            unique_documents.append(doc)
+    
+    # Move duplicates to duplicates/ folder
+    if duplicates:
+        duplicates_dir = root_dir / "duplicates"
+        duplicates_dir.mkdir(exist_ok=True)
+        logger.info(f"Moving {len(duplicates)} duplicate files to duplicates/")
+        
+        for dup_doc, canonical_doc in duplicates:
+            try:
+                dest_path = duplicates_dir / dup_doc.file_name
+                dup_doc.file_path.rename(dest_path)
+                logger.info(f"  → {dup_doc.file_name} (duplicate of {canonical_doc.file_name})")
+            except Exception as e:
+                logger.error(f"Failed to move duplicate {dup_doc.file_name}: {e}")
+    
+    # Use only unique documents for processing
+    documents = unique_documents
+    logger.info(f"Processing {len(documents)} unique PDF files")
 
     # Load existing index for resume mode
     existing_index = {}
@@ -258,7 +291,7 @@ def process(
         """Process a single document: metadata extraction + classification."""
         nonlocal processed_count
 
-        paper_id = doc.paper_id
+        paper_id = doc.file_hash
         
         # Resume: Skip if already analyzed
         if resume and paper_id in existing_index:
@@ -278,28 +311,22 @@ def process(
         text_hash = None
         
         if resume:
-            cached = cache_manager.get(paper_id)
-            if cached:
-                metadata = cached.get("metadata")
-                text = cached.get("text")
-                text_hash = cached.get("text_hash")
+            # Try to load from cache
+            metadata = cache_manager.get_metadata(paper_id)
+            cached_text = cache_manager.get_text(paper_id)
+            if metadata and cached_text:
+                text, text_hash = cached_text
                 logger.info(f"[CACHE] Loaded cached metadata for {doc.file_name}")
 
         if not metadata:
             try:
                 metadata = metadata_extractor.extract(doc.file_path, topic=topic)
-                text = pdf_parser.extract_text(doc.file_path)
-                text_hash = compute_file_hash(doc.file_path)
+                text, content_hash = pdf_parser.extract_text(doc.file_path)
+                text_hash = file_hash(doc.file_path)
                 
-                # Cache metadata
-                cache_manager.set(
-                    paper_id,
-                    {
-                        "metadata": metadata,
-                        "text": text,
-                        "text_hash": text_hash,
-                    },
-                )
+                # Cache metadata and text
+                cache_manager.set_metadata(paper_id, metadata)
+                cache_manager.set_text(paper_id, text, text_hash)
             except Exception as e:
                 logger.error(f"[ERROR] Metadata extraction failed: {e}")
                 metadata = {}
