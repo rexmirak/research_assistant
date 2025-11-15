@@ -40,6 +40,29 @@ def cli():
     pass
 
 
+@cli.command(short_help="Run interactive setup wizard")
+def setup():
+    """Run interactive setup wizard to configure Ollama, Gemini, and system dependencies."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    
+    # Find setup script
+    script_path = Path(__file__).parent / "setup_assistant.sh"
+    
+    if not script_path.exists():
+        logger.error("Setup script not found!")
+        logger.info("Please run manually: bash setup_assistant.sh")
+        sys.exit(1)
+    
+    # Run the setup script
+    try:
+        subprocess.run(["bash", str(script_path)], check=True)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Setup failed: {e}")
+        sys.exit(1)
+
+
 @cli.command(short_help="Process PDFs through the full analysis pipeline")
 @click.option(
     "--root-dir",

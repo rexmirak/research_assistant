@@ -8,10 +8,9 @@ An intelligent pipeline for processing research papers using LLMs (Ollama or Gem
 - **📊 Multi-Category Scoring**: Papers scored across ALL categories simultaneously for best-fit placement
 - **🎯 Flexible LLM Support**: Use local Ollama models or Google Gemini API
 - **🔧 Generic & Configurable**: Runtime topic and directory configuration (no hardcoding)
-- **📄 Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf + Tesseract) + pdfminer.six
+- **📄 Accurate PDF Parsing**: PyMuPDF + OCR fallback (ocrmypdf + Tesseract)
 - **🔍 LLM-Based Metadata Extraction**: Extract titles, authors, abstracts, years using local or cloud LLMs
 - **🔄 Smart Deduplication**: Exact (hash-based) and near-duplicate (MinHash-based) detection
-- **⚡ Efficient API Usage**: 2 LLM calls per paper (metadata + classification)
 - **📝 Topic-Focused Summaries**: Per-paper summaries with "how this helps your research"
 - **💾 Resumable**: SQLite cache for embeddings and OCR outputs, index-based resume logic
 - **📤 Multiple Outputs**: JSONL master index + CSV spreadsheet + Markdown summaries per category
@@ -94,24 +93,83 @@ research_assistant/
 
 ## Installation
 
+### From PyPI (Recommended)
+
 ```bash
-# Clone or navigate to project
+# Install from PyPI
+pip install research-assistant-llm
+
+# Run interactive setup wizard (guides you through Ollama/Gemini setup)
+research-assistant setup
+
+# Or manual setup:
+# Option 1: Use Ollama (local, free)
+ollama pull deepseek-r1:8b
+ollama pull nomic-embed-text
+
+# Option 2: Use Gemini API (cloud-based)
+export GEMINI_API_KEY="your_api_key_here"
+```
+
+### From Source (Development)
+
+```bash
+# Clone repository
+git clone https://github.com/rexmirak/research_assistant.git
 cd research_assistant
 
 # Create virtual environment
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install the package with dependencies
+# Install in editable mode
 pip install -e .
 
-# Option 1: Local Ollama (recommended for privacy/offline)
+# Install development dependencies
+pip install -e ".[dev]"
+```
+
+## API Key Setup
+
+### Gemini API (Cloud)
+
+**Option 1: Environment Variable** (Recommended for CI/CD)
+```bash
+export GEMINI_API_KEY="your_api_key_here"
+research-assistant process --llm-provider gemini --root-dir ./papers --topic "..."
+```
+
+**Option 2: .env File** (Convenient for local development)
+```bash
+# Create .env in your working directory
+echo "GEMINI_API_KEY=your_api_key_here" > .env
+research-assistant process --llm-provider gemini --root-dir ./papers --topic "..."
+```
+
+**Option 3: Config File**
+```yaml
+# config.yaml
+gemini:
+  api_key: "${GEMINI_API_KEY}"  # References environment variable
+  # OR
+  api_key: "your_api_key_here"  # Direct (not recommended for version control)
+```
+
+```bash
+research-assistant process --config-file config.yaml --root-dir ./papers --topic "..."
+```
+
+**Get your Gemini API key**: https://aistudio.google.com/app/apikey
+
+### Ollama (Local)
+
+No API key needed! Just install Ollama and pull models:
+```bash
+# Install from https://ollama.com/download
 ollama pull deepseek-r1:8b
 ollama pull nomic-embed-text
 
-# Option 2: Gemini API (cloud-based)
-# Create .env file with your API key:
-echo "GEMINI_API_KEY=your_api_key_here" > .env
+research-assistant process --llm-provider ollama --root-dir ./papers --topic "..."
 ```
 
 ## Quick Start
