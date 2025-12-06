@@ -1,0 +1,154 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+    
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Install project (editable)
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      run: pip install -e .
+    
+    - name: Run Flake8
+      run: flake8 core/ utils/ tests/ cli.py setup.py config.py check_install.py
+    
+    - name: Run MyPy
+      run: mypy core/ utils/ cli.py --explicit-package-bases --ignore-missing-imports
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Install project (editable)
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      run: pip install -e .
+    
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ -v --cov=core --cov=utils \
+          --cov-report=xml --cov-report=term-missing \
+          --cov-report=html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pip-audit bandit
+    
+    - name: Run pip-audit (dependency vulnerability scan)
+      run: |
+        # GHSA-f83h-ghpp-7wcc (pdfminer.six pickle RCE): Only exploitable if CMAP_PATH 
+        # points to user-writable directories. We don't set CMAP_PATH and process local
+        # PDFs only, not untrusted uploads. Monitoring for upstream fix.
+        pip-audit --requirement requirements.txt --ignore-vuln GHSA-f83h-ghpp-7wcc
+    
+    - name: Run Bandit (code security scan)
+      run: bandit -r core/ utils/ -ll
+
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check README exists
+      run: test -f README.md
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.13'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+    
+    - name: Build package
+      run: python -m build
+      continue-on-error: true
+    
+    - name: Check CLI entrypoint
+      run: |
+        pip install -r requirements.txt
+        pip install -e .
+        research-assistant --help
